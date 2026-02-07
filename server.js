@@ -1,8 +1,14 @@
+import cors from "cors";
 import express from "express";
 import dotenv from "dotenv";
 import { MongoClient } from "mongodb";
 
 dotenv.config();
+
+const allowlist = [
+  "http://localhost",
+  "https://andrewzc.net",
+];
 
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -21,6 +27,14 @@ const app = express();
 
 app.use(express.json());
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowlist.includes(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS"));
+  },
+  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+}));
 
 let client;
 let db;
