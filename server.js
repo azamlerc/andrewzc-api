@@ -154,9 +154,19 @@ app.get("/countries/:code", async (req, res) => {
       .sort({ name: 1, key: 1 })
       .toArray();
 
+    const all = entityDocs.map(stripMongoId);
+
+    // Hoist the canonical country entity (list === "countries")
+    const countryEntityIndex = all.findIndex(e => e.list === "countries");
+    const countryEntity = countryEntityIndex >= 0 ? all[countryEntityIndex] : null;
+
+    const rest = countryEntityIndex >= 0
+      ? all.filter((_, i) => i !== countryEntityIndex)
+      : all;
+
     return res.json({
-      country: code,
-      entities: entityDocs.map(stripMongoId)
+      country: countryEntity,
+      entities: rest
     });
   } catch (err) {
     console.error("GET /countries/:code failed:", err);
@@ -186,9 +196,19 @@ app.get("/cities/:key", async (req, res) => {
       .sort({ name: 1, key: 1 })
       .toArray();
 
+    const all = entityDocs.map(stripMongoId);
+
+    // Hoist the canonical city entity (list === "cities")
+    const cityEntityIndex = all.findIndex(e => e.list === "cities");
+    const cityEntity = cityEntityIndex >= 0 ? all[cityEntityIndex] : null;
+
+    const rest = cityEntityIndex >= 0
+      ? all.filter((_, i) => i !== cityEntityIndex)
+      : all;
+
     return res.json({
-      city,
-      entities: entityDocs.map(stripMongoId)
+      city: cityEntity,
+      entities: rest
     });
   } catch (err) {
     console.error("GET /cities/:key failed:", err);
