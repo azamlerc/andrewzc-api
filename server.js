@@ -83,7 +83,7 @@ app.get("/pages/:id", async (req, res) => {
     console.error("GET /api/pages/:id failed:", err);
     return res.status(500).json({
       error: "internal_error",
-      message: "Something went wrong"
+      message: err
     });
   }
 });
