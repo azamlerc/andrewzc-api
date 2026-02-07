@@ -7,7 +7,9 @@ dotenv.config();
 
 const allowlist = [
   "http://localhost",
+  "http://localhost:3000",
   "https://andrewzc.net",
+  "https://api.andrewzc.net",
 ];
 
 const PORT = process.env.PORT || 3000;
@@ -53,6 +55,29 @@ function stripMongoId(doc) {
   return rest;
 }
 
+function toTitleCaseWord(w) {
+  if (!w) return w;
+  const lower = w.toLowerCase();
+  return lower.charAt(0).toUpperCase() + lower.slice(1);
+}
+
+function cityKeyToDisplayName(key) {
+  // Convert `den-haag` -> `Den Haag`
+  // Heuristic: if last token is 2 letters, treat it as a state/province code and format as ", XX"
+  const parts = String(key || "").split("-").filter(Boolean);
+  if (parts.length === 0) return "";
+
+  const last = parts[parts.length - 1];
+  const rest = parts.slice(0, -1);
+
+  if (last.length === 2 && rest.length > 0) {
+    const left = rest.map(toTitleCaseWord).join(" ");
+    return `${left}, ${last.toUpperCase()}`;
+  }
+
+  return parts.map(toTitleCaseWord).join(" ");
+}
+
 app.get("/pages/:id", async (req, res) => {
   const id = req.params.id;
 
@@ -72,7 +97,7 @@ app.get("/pages/:id", async (req, res) => {
 
     const entityDocs = await entities
       .find({ list: id })
-      .sort({ name: 1 })
+      .sort({ name: 1, key: 1 })
       .toArray();
 
     return res.json({
@@ -80,12 +105,112 @@ app.get("/pages/:id", async (req, res) => {
       entities: entityDocs.map(stripMongoId)
     });
   } catch (err) {
-    console.error("GET /api/pages/:id failed:", err);
+    console.error("GET /pages/:id failed:", err);
     return res.status(500).json({
       error: "internal_error",
       message: err
     });
   }
+});
+
+// List all pages (thin wrapper around the `pages` collection)
+app.get("/pages", async (_req, res) => {
+  try {
+    const db = await connectToMongo();
+    const pages = db.collection("pages");
+
+    const pageDocs = await pages
+      .find({})
+      .sort({ name: 1, key: 1 })
+      .toArray();
+
+    return res.json({
+      pages: pageDocs.map(stripMongoId)
+    });
+  } catch (err) {
+    console.error("GET /pages failed:", err);
+    return res.status(500).json({
+      error: "internal_error",
+      message: err
+    });
+  }
+});
+
+// Entities by country code (supports `country: "BE"` and `countries: ["BE", ...]`)
+app.get("/countries/:code", async (req, res) => {
+  const code = String(req.params.code || "").toUpperCase();
+  if (!code) {
+    return res.status(400).json({ error: "bad_request", message: "Missing country code" });
+  }
+
+  try {
+    const db = await connectToMongo();
+    const entities = db.collection("entities");
+
+    const query = { $or: [{ country: code }, { countries: code }] };
+
+    const entityDocs = await entities
+      .find(query)
+      .sort({ name: 1, key: 1 })
+      .toArray();
+
+    return res.json({
+      country: code,
+      entities: entityDocs.map(stripMongoId)
+    });
+  } catch (err) {
+    console.error("GET /countries/:code failed:", err);
+    return res.status(500).json({
+      error: "internal_error",
+      message: err
+    });
+  }
+});
+
+// Entities by city (key is dashed; data is stored under display name)
+app.get("/cities/:key", async (req, res) => {
+  const key = String(req.params.key || "");
+  const city = cityKeyToDisplayName(key);
+  if (!city) {
+    return res.status(400).json({ error: "bad_request", message: "Missing city key" });
+  }
+
+  try {
+    const db = await connectToMongo();
+    const entities = db.collection("entities");
+
+    const query = { city };
+
+    const entityDocs = await entities
+      .find(query)
+      .sort({ name: 1, key: 1 })
+      .toArray();
+
+    return res.json({
+      city,
+      entities: entityDocs.map(stripMongoId)
+    });
+  } catch (err) {
+    console.error("GET /cities/:key failed:", err);
+    return res.status(500).json({
+      error: "internal_error",
+      message: err
+    });
+  }
+});
+
+app.get("/", (_req, res) => {
+  res.type("text/plain").send(
+    [
+      "andrewzc-api",
+      "",
+      "GET /healthz",
+      "GET /pages",
+      "GET /pages/:id",
+      "GET /countries/:code",
+      "GET /cities/:key",
+    ].join("\n")
+  );
 });
 
 app.listen(PORT, () => {
