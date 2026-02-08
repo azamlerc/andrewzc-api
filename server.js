@@ -87,7 +87,7 @@ function adminCookieOptions() {
   return {
     httpOnly: true,
     secure: isProd,
-    sameSite: "strict",
+    sameSite: "none",
     path: "/",
     // ~10 years
     maxAge: 1000 * 60 * 60 * 24 * 365 * 10,
