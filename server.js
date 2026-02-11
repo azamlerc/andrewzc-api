@@ -129,6 +129,48 @@ function cityKeyToDisplayName(key) {
   return parts.map(toTitleCaseWord).join(" ");
 }
 
+function simplify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/ /g, "-")
+    .replace(/’/g, "")
+    .replace(/\./g, "")
+    .replace(/,/g, "")
+    .replace(/\*/g, "")
+    .replace(/"/g, "")
+    .replace(/</g, "")
+    .replace(/>/g, "")
+    .replace(/\(/g, "")
+    .replace(/\)/g, "")
+    .replace(/\//g, "-")
+    .replace(/&/g, "-")
+    .replace(/–/g, "-")
+    .replace(/—/g, "-")
+    .replace(/---/g, "-")
+    .normalize("NFD") // decompose accents/diacritics
+    .replace(/[\u0300-\u036f]/g, "") // remove diacritical marks
+    .replace(/the-/, "");
+}
+
+function makeKeyFromPageTags({ tags, name, reference, countryCode }) {
+  const t = Array.isArray(tags) ? tags : [];
+  const referenceKey = t.includes("reference-key");
+  const referenceFirst = t.includes("reference-first");
+  const countryKey = t.includes("country-key");
+
+  const n = String(name || "");
+  const r = reference == null ? null : String(reference);
+  const cc = countryCode == null ? null : String(countryCode).toUpperCase();
+
+  if (countryKey && cc && !n.includes(",")) {
+    return simplify(`${n} ${cc}`);
+  } else if (referenceKey && r) {
+    return simplify(referenceFirst ? `${r} ${n}` : `${n} ${r}`);
+  } else {
+    return simplify(n);
+  }
+}
+
 /*
  async function createAdminAccountOnce() {
   const username = process.env.ADMIN_USERNAME;
@@ -340,38 +382,82 @@ app.get("/entities/:list/:key", async (req, res) => {
   }
 });
 
-app.post("/entities/:list/:key", requireAdminSession, async (req, res) => {
+// Create new entity (server-generated key)
+app.post("/entities/:list", requireAdminSession, async (req, res) => {
   const list = String(req.params.list || "");
-  const key = String(req.params.key || "");
-  if (!list || !key) {
-    return res.status(400).json({ error: "bad_request", message: "Missing list or key" });
+  if (!list) {
+    return res.status(400).json({ error: "bad_request", message: "Missing list" });
   }
 
   try {
     const db = await connectToMongo();
+    const pages = db.collection("pages");
     const entities = db.collection("entities");
+
+    const pageDoc = await pages.findOne({ key: list });
+    if (!pageDoc) {
+      return res.status(404).json({ error: "page_not_found", message: `No page found for key='${list}'` });
+    }
 
     const now = new Date();
     const payload = { ...(req.body || {}) };
-    // Enforce canonical identifiers
-    payload.list = list;
-    payload.key = key;
-    payload.updatedAt = now;
-    if (!payload.createdAt) payload.createdAt = now;
 
-    const existing = await entities.findOne({ list, key });
-    if (existing) {
-      return res.status(409).json({ error: "conflict", message: "Entity already exists" });
+    // Prevent clients from setting identifiers.
+    delete payload._id;
+    delete payload.list;
+    delete payload.key;
+
+    const name = String(payload.name || "").trim();
+    if (!name) {
+      return res.status(400).json({ error: "bad_request", message: "Missing name" });
     }
 
-    await entities.insertOne(payload);
-    return res.status(201).json(stripMongoId(payload));
+    const reference = payload.reference != null ? String(payload.reference).trim() : null;
+
+    // Country code best-effort: prefer `country`, else first of `countries`.
+    let countryCode = null;
+    if (payload.country) {
+      countryCode = String(payload.country).toUpperCase();
+    } else if (Array.isArray(payload.countries) && payload.countries.length > 0) {
+      countryCode = String(payload.countries[0]).toUpperCase();
+    }
+
+    const baseKey = makeKeyFromPageTags({
+      tags: pageDoc.tags,
+      name,
+      reference,
+      countryCode
+    });
+
+    if (!baseKey) {
+      return res.status(400).json({ error: "bad_request", message: "Could not derive key" });
+    }
+
+    // Ensure uniqueness within the list by suffixing -2, -3, ... if needed.
+    let key = baseKey;
+    let i = 2;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const existing = await entities.findOne({ list, key });
+      if (!existing) break;
+      key = `${baseKey}-${i++}`;
+    }
+
+    const doc = {
+      ...payload,
+      list,
+      key,
+      updatedAt: now,
+      createdAt: payload.createdAt ? payload.createdAt : now
+    };
+
+    await entities.insertOne(doc);
+    return res.status(201).json(stripMongoId(doc));
   } catch (err) {
-    // Duplicate key protection if index exists
     if (err && (err.code === 11000 || String(err).includes("E11000"))) {
       return res.status(409).json({ error: "conflict", message: "Entity already exists" });
     }
-    console.error("POST /entities/:list/:key failed:", err);
+    console.error("POST /entities/:list failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
@@ -533,7 +619,7 @@ app.get("/", (_req, res) => {
       "POST /admin/logout",
       "GET /admin/me",
       "GET /entities/:list/:key",
-      "POST /entities/:list/:key (admin)",
+      "POST /entities/:list (admin)",
       "PUT /entities/:list/:key (admin)",
     ].join("\n")
   );
