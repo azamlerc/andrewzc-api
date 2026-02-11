@@ -400,11 +400,13 @@ app.put("/entities/:list/:key", requireAdminSession, async (req, res) => {
       { returnDocument: "after" }
     );
 
-    if (!result.value) {
-      return res.status(404).json({ error: "not_found", message: "Entity not found" });
+    const doc = result?.value ?? result; // supports both driver behaviors
+
+    if (!doc) {
+    return res.status(404).json({ error: "not_found", message: "Entity not found" });
     }
 
-    return res.json(stripMongoId(result.value));
+    return res.json(stripMongoId(doc));
   } catch (err) {
     console.error("PUT /entities/:list/:key failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
