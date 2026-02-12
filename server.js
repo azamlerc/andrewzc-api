@@ -605,6 +605,54 @@ app.get("/cities/:key", async (req, res) => {
   }
 });
 
+// --- Wiki search ---
+app.get("/wiki", async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (!q) {
+    return res.status(400).json({ error: "bad_request", message: "Missing ?q=" });
+  }
+
+  try {
+    const params = new URLSearchParams({
+      action: "query",
+      list: "search",
+      srsearch: q,
+      format: "json",
+      srlimit: "1"
+    });
+
+    const url = `https://en.wikipedia.org/w/api.php?${params.toString()}`;
+
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "andrewzc/1.0 (personal project)"
+      }
+    });
+
+    if (!response.ok) {
+      return res.status(502).json({ error: "wiki_error", message: "Wikipedia request failed" });
+    }
+
+    const json = await response.json();
+
+    const title =
+      json?.query?.search?.[0]?.title;
+
+    if (!title) {
+      return res.json({ link: null });
+    }
+
+    const encoded = encodeURIComponent(title.replace(/ /g, "_"));
+    const link = `https://en.wikipedia.org/wiki/${encoded}`;
+
+    return res.json({ link });
+
+  } catch (err) {
+    console.error("GET /wiki failed:", err);
+    return res.status(500).json({ error: "internal_error", message: "Wiki lookup failed" });
+  }
+});
+
 app.get("/", (_req, res) => {
   res.type("text/plain").send(
     [
@@ -621,6 +669,7 @@ app.get("/", (_req, res) => {
       "GET /entities/:list/:key",
       "POST /entities/:list (admin)",
       "PUT /entities/:list/:key (admin)",
+      "GET /wiki"
     ].join("\n")
   );
 });
