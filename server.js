@@ -342,10 +342,27 @@ app.get("/pages/:id", async (req, res) => {
       });
     }
 
-    const entityDocs = await entities
-      .find({ list: id })
-      .sort({ name: 1, key: 1 })
-      .toArray();
+    let entityDocs;
+
+    if (pageDoc.propertyOf) {
+      // Derived page: query parent list for entities with this prop
+      // The prop key is the same as the page key (e.g., page key "curved" -> props.curved)
+      const query = {
+        list: pageDoc.propertyOf,
+        [`props.${id}`]: { $exists: true }
+      };
+
+      entityDocs = await entities
+        .find(query)
+        .sort({ name: 1, key: 1 })
+        .toArray();
+    } else {
+      // Primary page: direct list lookup
+      entityDocs = await entities
+        .find({ list: id })
+        .sort({ name: 1, key: 1 })
+        .toArray();
+    }
 
     return res.json({
       "--info--": stripMongoId(pageDoc),
