@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import crypto from "crypto";
 import argon2 from "argon2";
 import { MongoClient } from "mongodb";
+import OpenAI from "openai";
 
 dotenv.config();
 
@@ -32,6 +33,10 @@ if (!SESSION_PEPPER) {
   console.error("Missing SESSION_PEPPER in env (used to HMAC session tokens)");
   process.exit(1);
 }
+
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 
 const app = express();
 
@@ -622,6 +627,113 @@ app.get("/cities/:key", async (req, res) => {
   }
 });
 
+// --- Semantic search ---
+
+// GET /entities?search=<query>&list=<optional-list-filter>&limit=<optional>
+app.get("/entities", async (req, res) => {
+  const query      = String(req.query.search || "").trim();
+  const listFilter = req.query.list ? String(req.query.list) : null;
+  const limit      = Math.min(parseInt(req.query.limit) || 10, 50);
+
+  if (!query) {
+    return res.status(400).json({ error: "bad_request", message: "Missing ?search=" });
+  }
+  if (!openai) {
+    return res.status(503).json({ error: "unavailable", message: "Semantic search not configured" });
+  }
+
+  try {
+    const db       = await connectToMongo();
+    const entities = db.collection("entities");
+
+    const { data } = await openai.embeddings.create({
+      model: "text-embedding-3-small",
+      input: query,
+    });
+
+    const pipeline = [
+      {
+        $vectorSearch: {
+          index:        "wikiEmbedding",
+          path:         "wikiEmbedding",
+          queryVector:  data[0].embedding,
+          numCandidates: limit * 5,
+          limit,
+        },
+      },
+      { $project: { name: 1, list: 1, key: 1, icons: 1, score: { $meta: "vectorSearchScore" } } },
+    ];
+
+    if (listFilter) pipeline.splice(1, 0, { $match: { list: listFilter } });
+
+    pipeline.push(
+      { $lookup: { from: "pages", localField: "list", foreignField: "key", as: "pageInfo" } },
+      { $unwind: { path: "$pageInfo", preserveNullAndEmptyArrays: true } },
+      { $project: {
+        name: 1, list: 1, key: 1, icons: 1, score: 1,
+        page: { name: "$pageInfo.name", icon: "$pageInfo.icon", key: "$pageInfo.key" },
+      }},
+    );
+
+    const results = await entities.aggregate(pipeline).toArray();
+    return res.json({ query, results: results.map(stripMongoId) });
+  } catch (err) {
+    console.error("GET /entities?search= failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+// GET /entities/:list/:key/similar?limit=<optional>
+app.get("/entities/:list/:key/similar", async (req, res) => {
+  const list  = String(req.params.list || "");
+  const key   = String(req.params.key  || "");
+  const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+
+  if (!list || !key) {
+    return res.status(400).json({ error: "bad_request", message: "Missing list or key" });
+  }
+
+  try {
+    const db       = await connectToMongo();
+    const entities = db.collection("entities");
+
+    const source = await entities.findOne({ list, key }, { projection: { wikiEmbedding: 1, name: 1 } });
+    if (!source) {
+      return res.status(404).json({ error: "not_found", message: "Entity not found" });
+    }
+    if (!source.wikiEmbedding) {
+      return res.status(404).json({ error: "not_found", message: "Entity has no embedding" });
+    }
+
+    const pipeline = [
+      {
+        $vectorSearch: {
+          index:         "wikiEmbedding",
+          path:          "wikiEmbedding",
+          queryVector:   source.wikiEmbedding,
+          numCandidates: (limit + 1) * 5,
+          limit:         limit + 1,  // fetch one extra to filter out the source itself
+        },
+      },
+      { $project: { name: 1, list: 1, key: 1, icons: 1, score: { $meta: "vectorSearchScore" } } },
+      { $lookup: { from: "pages", localField: "list", foreignField: "key", as: "pageInfo" } },
+      { $unwind: { path: "$pageInfo", preserveNullAndEmptyArrays: true } },
+      { $project: {
+        name: 1, list: 1, key: 1, icons: 1, score: 1,
+        page: { name: "$pageInfo.name", icon: "$pageInfo.icon", key: "$pageInfo.key" },
+      }},
+    ];
+
+    const results = await entities.aggregate(pipeline).toArray();
+    const filtered = results.filter(r => r.score < 0.9999).slice(0, limit);
+
+    return res.json({ list, key, results: filtered.map(stripMongoId) });
+  } catch (err) {
+    console.error("GET /entities/:list/:key/similar failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 // --- Wiki search ---
 app.get("/wiki", async (req, res) => {
   const q = String(req.query.q || "").trim();
@@ -683,7 +795,9 @@ app.get("/", (_req, res) => {
       "POST /admin/login",
       "POST /admin/logout",
       "GET /admin/me",
+      "GET /entities?search=<query>",
       "GET /entities/:list/:key",
+      "GET /entities/:list/:key/similar",
       "POST /entities/:list (admin)",
       "PUT /entities/:list/:key (admin)",
       "GET /wiki"
