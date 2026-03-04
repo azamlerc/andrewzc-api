@@ -4,10 +4,23 @@ import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import crypto from "crypto";
 import argon2 from "argon2";
-import { MongoClient } from "mongodb";
-import OpenAI from "openai";
+
+import {
+  ensureIndexes,
+  getPage, getPages, getPageSummaries, getPageWithEntities,
+  getEntity, createEntity, updateEntity,
+  getEntitiesByCountry, getEntitiesByCity,
+  getEntitiesNearPoint, getEntitiesNearEntity,
+  searchByName, queryByProps,
+  searchByVector, getSimilarEntities, embedText,
+  findAccount, findSession, createSession, touchSession, revokeSession,
+} from "./database.js";
+import { simplify, cityKeyToDisplayName } from "./utils.js";
+import { naturalLanguageSearch } from "./search.js";
 
 dotenv.config();
+
+// ---- Config ----
 
 const allowlist = [
   "http://localhost",
@@ -16,34 +29,19 @@ const allowlist = [
   "https://api.andrewzc.net",
 ];
 
-const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI;
-const DB_NAME = process.env.MONGODB_DB;
-
-if (!MONGODB_URI) {
-  console.error("Missing MONGODB_URI in env");
-  process.exit(1);
-}
-if (!DB_NAME) {
-  console.error("Missing MONGODB_DB in env");
-  process.exit(1);
-}
+const PORT           = process.env.PORT || 3000;
 const SESSION_PEPPER = process.env.SESSION_PEPPER;
-if (!SESSION_PEPPER) {
-  console.error("Missing SESSION_PEPPER in env (used to HMAC session tokens)");
-  process.exit(1);
-}
 
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
+if (!process.env.MONGODB_URI)  { console.error("Missing MONGODB_URI");  process.exit(1); }
+if (!process.env.MONGODB_DB)   { console.error("Missing MONGODB_DB");   process.exit(1); }
+if (!SESSION_PEPPER)           { console.error("Missing SESSION_PEPPER"); process.exit(1); }
+
+// ---- App setup ----
 
 const app = express();
-
 app.use(express.json());
 app.use(cookieParser());
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin || allowlist.includes(origin)) return cb(null, true);
@@ -53,51 +51,7 @@ app.use(cors({
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
 }));
 
-let client;
-let db;
-
-async function connectToMongo() {
-  if (db) return db;
-  client = new MongoClient(MONGODB_URI, {maxPoolSize: 10});
-  await client.connect();
-  db = client.db(DB_NAME);
-  return db;
-}
-
-function sha256Hex(input) {
-  return crypto.createHash("sha256").update(input).digest("hex");
-}
-
-function sessionTokenToHash(token) {
-  // HMAC prevents a DB leak from being used to validate session tokens.
-  return crypto.createHmac("sha256", SESSION_PEPPER).update(token).digest("hex");
-}
-
-function makeSessionToken() {
-  // 32 bytes => 256 bits of entropy.
-  return crypto.randomBytes(32).toString("base64url");
-}
-
-async function ensureIndexes() {
-  const db = await connectToMongo();
-  await db.collection("accounts").createIndex({ username: 1 }, { unique: true });
-  await db.collection("sessions").createIndex({ sessionTokenHash: 1 }, { unique: true });
-  await db.collection("sessions").createIndex({ accountId: 1 });
-  await db.collection("entities").createIndex({ list: 1, key: 1 }, { unique: true });
-}
-
-function adminCookieOptions() {
-  const isProd = process.env.NODE_ENV === "production";
-  // SameSite=Strict is safest; if you ever embed admin UI cross-site you may need Lax.
-  return {
-    httpOnly: true,
-    secure: isProd,
-    sameSite: "none",
-    path: "/",
-    // ~10 years
-    maxAge: 1000 * 60 * 60 * 24 * 365 * 10,
-  };
-}
+// ---- Presentation helpers ----
 
 function cleanError(err) {
   if (!err) return err;
@@ -105,145 +59,50 @@ function cleanError(err) {
   return err.message || String(err);
 }
 
-function stripMongoId(doc) {
+// Strip internal fields from all responses.
+function strip(doc) {
   if (!doc) return doc;
-  const { _id, ...rest } = doc;
+  const { _id, wikiSummary, wikiEmbedding, enrichedAt, ...rest } = doc;
   return rest;
 }
 
-function toTitleCaseWord(w) {
-  if (!w) return w;
-  const lower = w.toLowerCase();
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
+// Strip internal fields but keep wikiSummary (for single-entity responses).
+function stripKeepSummary(doc) {
+  if (!doc) return doc;
+  const { _id, wikiEmbedding, enrichedAt, ...rest } = doc;
+  return rest;
 }
 
-function cityKeyToDisplayName(key) {
-  // Convert `den-haag` -> `Den Haag`
-  // Heuristic: if last token is 2 letters, treat it as a state/province code and format as ", XX"
-  const parts = String(key || "").split("-").filter(Boolean);
-  if (parts.length === 0) return "";
-
-  const last = parts[parts.length - 1];
-  const rest = parts.slice(0, -1);
-
-  if (last.length === 2 && rest.length > 0) {
-    const left = rest.map(toTitleCaseWord).join(" ");
-    return `${left}, ${last.toUpperCase()}`;
-  }
-
-  return parts.map(toTitleCaseWord).join(" ");
+function adminCookieOptions() {
+  return {
+    httpOnly: true,
+    secure:   process.env.NODE_ENV === "production",
+    sameSite: "none",
+    path:     "/",
+    maxAge:   1000 * 60 * 60 * 24 * 365 * 10,
+  };
 }
 
-function simplify(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/ /g, "-")
-    .replace(/’/g, "")
-    .replace(/\./g, "")
-    .replace(/,/g, "")
-    .replace(/\*/g, "")
-    .replace(/"/g, "")
-    .replace(/</g, "")
-    .replace(/>/g, "")
-    .replace(/\(/g, "")
-    .replace(/\)/g, "")
-    .replace(/\//g, "-")
-    .replace(/&/g, "-")
-    .replace(/–/g, "-")
-    .replace(/—/g, "-")
-    .replace(/---/g, "-")
-    .normalize("NFD") // decompose accents/diacritics
-    .replace(/[\u0300-\u036f]/g, "") // remove diacritical marks
-    .replace(/the-/, "");
+// ---- Auth helpers ----
+
+function sessionTokenToHash(token) {
+  return crypto.createHmac("sha256", SESSION_PEPPER).update(token).digest("hex");
 }
 
-function makeKeyFromPageTags({ tags, name, reference, countryCode }) {
-  const t = Array.isArray(tags) ? tags : [];
-  const referenceKey = t.includes("reference-key");
-  const referenceFirst = t.includes("reference-first");
-  const countryKey = t.includes("country-key");
-
-  const n = String(name || "");
-  const r = reference == null ? null : String(reference);
-  const cc = countryCode == null ? null : String(countryCode).toUpperCase();
-
-  if (countryKey && cc && !n.includes(",")) {
-    return simplify(`${n} ${cc}`);
-  } else if (referenceKey && r) {
-    return simplify(referenceFirst ? `${r} ${n}` : `${n} ${r}`);
-  } else {
-    return simplify(n);
-  }
+function makeSessionToken() {
+  return crypto.randomBytes(32).toString("base64url");
 }
-
-/*
- async function createAdminAccountOnce() {
-  const username = process.env.ADMIN_USERNAME;
-  const password = process.env.ADMIN_PASSWORD;
-
-  if (!username || !password) {
-    console.error("Missing ADMIN_USERNAME or ADMIN_PASSWORD in env");
-    process.exit(1);
-  }
-
-  const db = await connectToMongo();
-  const accounts = db.collection("accounts");
-
-  const passwordHash = await argon2.hash(password, {
-    type: argon2.argon2id,
-    memoryCost: 65536, // 64MB (KiB)
-    timeCost: 2,
-    parallelism: 1,
-  });
-
-  const now = new Date();
-
-  const existing = await accounts.findOne({ username });
-  if (existing) {
-    console.log(`Admin account '${username}' already exists. Updating password hash.`);
-    await accounts.updateOne(
-      { _id: existing._id },
-      { $set: { passwordHash, updatedAt: now, roles: ["admin"], disabled: false } }
-    );
-  } else {
-    await accounts.insertOne({
-      username,
-      passwordHash,
-      roles: ["admin"],
-      disabled: false,
-      createdAt: now,
-      updatedAt: now,
-    });
-    console.log(`Created admin account '${username}'.`);
-  }
-
-  console.log("Done. You can now unset ADMIN_PASSWORD and disable CREATE_ADMIN.");
-}
-*/
 
 async function requireAdminSession(req, res, next) {
   try {
     const raw = req.cookies?.admin_session;
-    if (!raw) {
-      return res.status(401).json({ error: "unauthorized", message: "Missing admin session" });
-    }
+    if (!raw) return res.status(401).json({ error: "unauthorized", message: "Missing admin session" });
 
-    const sessionTokenHash = sessionTokenToHash(raw);
+    const hash    = sessionTokenToHash(raw);
+    const session = await findSession(hash);
+    if (!session) return res.status(401).json({ error: "unauthorized", message: "Invalid or revoked session" });
 
-    const db = await connectToMongo();
-    const sessions = db.collection("sessions");
-    const session = await sessions.findOne({ sessionTokenHash, revokedAt: null });
-
-    if (!session) {
-      return res.status(401).json({ error: "unauthorized", message: "Invalid or revoked session" });
-    }
-
-    // Optional: touch lastSeenAt (keep it light)
-    sessions.updateOne(
-      { _id: session._id },
-      { $set: { lastSeenAt: new Date() } }
-    ).catch(() => {});
-
+    touchSession(hash);
     req.admin = { accountId: session.accountId, sessionId: session._id };
     return next();
   } catch (err) {
@@ -252,7 +111,8 @@ async function requireAdminSession(req, res, next) {
   }
 }
 
-// --- Admin auth ---
+// ---- Admin auth ----
+
 app.post("/admin/login", async (req, res) => {
   try {
     const { username, password, label } = req.body || {};
@@ -260,36 +120,24 @@ app.post("/admin/login", async (req, res) => {
       return res.status(400).json({ error: "bad_request", message: "Missing username or password" });
     }
 
-    const db = await connectToMongo();
-    const accounts = db.collection("accounts");
-    const sessions = db.collection("sessions");
-
-    const account = await accounts.findOne({ username, disabled: false });
-    if (!account) {
-      return res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
-    }
+    const account = await findAccount(username);
+    if (!account) return res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
 
     const ok = await argon2.verify(account.passwordHash, password);
-    if (!ok) {
-      return res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
-    }
+    if (!ok)  return res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
 
-    const sessionToken = makeSessionToken();
-    const sessionTokenHash = sessionTokenToHash(sessionToken);
+    const token = makeSessionToken();
+    const hash  = sessionTokenToHash(token);
 
-    const now = new Date();
-    await sessions.insertOne({
-      accountId: account._id,
-      sessionTokenHash,
-      createdAt: now,
-      lastSeenAt: now,
-      revokedAt: null,
-      label: label || null,
-      ip: req.headers["x-forwarded-for"] || req.socket?.remoteAddress || null,
+    await createSession({
+      accountId:        account._id,
+      sessionTokenHash: hash,
+      label,
+      ip:        req.headers["x-forwarded-for"] || req.socket?.remoteAddress || null,
       userAgent: req.headers["user-agent"] || null,
     });
 
-    res.cookie("admin_session", sessionToken, adminCookieOptions());
+    res.cookie("admin_session", token, adminCookieOptions());
     return res.json({ ok: true });
   } catch (err) {
     console.error("POST /admin/login failed:", err);
@@ -299,15 +147,8 @@ app.post("/admin/login", async (req, res) => {
 
 app.post("/admin/logout", requireAdminSession, async (req, res) => {
   try {
-    const raw = req.cookies?.admin_session;
-    const sessionTokenHash = sessionTokenToHash(raw);
-
-    const db = await connectToMongo();
-    await db.collection("sessions").updateOne(
-      { sessionTokenHash },
-      { $set: { revokedAt: new Date() } }
-    );
-
+    const hash = sessionTokenToHash(req.cookies.admin_session);
+    await revokeSession(hash);
     res.clearCookie("admin_session", { path: "/" });
     return res.json({ ok: true });
   } catch (err) {
@@ -320,163 +161,153 @@ app.get("/admin/me", async (req, res) => {
   try {
     const raw = req.cookies?.admin_session;
     if (!raw) return res.json({ authenticated: false });
-
-    const sessionTokenHash = sessionTokenToHash(raw);
-    const db = await connectToMongo();
-    const session = await db.collection("sessions").findOne({ sessionTokenHash, revokedAt: null });
+    const session = await findSession(sessionTokenToHash(raw));
     return res.json({ authenticated: !!session });
-  } catch (_err) {
+  } catch {
     return res.json({ authenticated: false });
   }
 });
 
-app.get("/pages/:id", async (req, res) => {
-  const id = req.params.id;
+// ---- Pages ----
 
+app.get("/pages", async (_req, res) => {
   try {
-    const db = await connectToMongo();
-    const pages = db.collection("pages");
-    const entities = db.collection("entities");
-
-    const pageDoc = await pages.findOne({ key: id });
-
-    if (!pageDoc) {
-      return res.status(404).json({
-        error: "page_not_found",
-        message: `No page found for key='${id}'`
-      });
-    }
-
-    let entityDocs;
-
-    if (pageDoc.propertyOf) {
-      // Derived page: query parent list for entities with this prop
-      // The prop key is the same as the page key (e.g., page key "curved" -> props.curved)
-      const query = {
-        list: pageDoc.propertyOf,
-        [`props.${id}`]: { $exists: true }
-      };
-
-      entityDocs = await entities
-        .find(query)
-        .sort({ name: 1, key: 1 })
-        .toArray();
-    } else {
-      // Primary page: direct list lookup
-      entityDocs = await entities
-        .find({ list: id })
-        .sort({ name: 1, key: 1 })
-        .toArray();
-    }
-
-    return res.json({
-      "--info--": stripMongoId(pageDoc),
-      entities: entityDocs.map(stripMongoId)
-    });
+    const pages = await getPages();
+    return res.json({ pages: pages.map(strip) });
   } catch (err) {
-    console.error("GET /pages/:id failed:", err);
-    return res.status(500).json({
-      error: "internal_error",
-      message: err
-    });
+    console.error("GET /pages failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
 
-// --- Entities CRUD (single entity by list+key) ---
-app.get("/entities/:list/:key", async (req, res) => {
-  const list = String(req.params.list || "");
-  const key = String(req.params.key || "");
-  if (!list || !key) {
-    return res.status(400).json({ error: "bad_request", message: "Missing list or key" });
+app.get("/pages/summaries", async (_req, res) => {
+  try {
+    const summaries = await getPageSummaries();
+    return res.json({ pages: summaries });
+  } catch (err) {
+    console.error("GET /pages/summaries failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+app.get("/pages/:id", async (req, res) => {
+  try {
+    const result = await getPageWithEntities(req.params.id);
+    if (!result) {
+      return res.status(404).json({ error: "page_not_found", message: `No page found for key='${req.params.id}'` });
+    }
+    return res.json({
+      "--info--": strip(result.page),
+      entities:  result.entities.map(strip),
+    });
+  } catch (err) {
+    console.error("GET /pages/:id failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+// ---- Entities ----
+
+app.get("/entities", async (req, res) => {
+  const nameQuery  = req.query.name   ? String(req.query.name).trim()   : null;
+  const searchQuery = req.query.search ? String(req.query.search).trim() : null;
+  const listFilter = req.query.list   ? String(req.query.list)          : null;
+  const limit      = Math.min(parseInt(req.query.limit) || 50, 50);
+
+  if (nameQuery) {
+    try {
+      const results = await searchByName(nameQuery, { listFilter, limit });
+      return res.json({ name: nameQuery, results: results.map(strip) });
+    } catch (err) {
+      console.error("GET /entities?name= failed:", err);
+      return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+    }
+  }
+
+  if (searchQuery) {
+    if (!process.env.OPENAI_API_KEY) {
+      return res.status(503).json({ error: "unavailable", message: "Semantic search not configured" });
+    }
+    try {
+      const vector  = await embedText(searchQuery);
+      const results = await searchByVector(vector, { listFilter, limit });
+      return res.json({ query: searchQuery, results: results.map(strip) });
+    } catch (err) {
+      console.error("GET /entities?search= failed:", err);
+      return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+    }
+  }
+
+  return res.status(400).json({ error: "bad_request", message: "Missing ?name= or ?search=" });
+});
+
+// GET /entities/:list/props?filter=<json>&sortBy=<prop>&sortDir=asc|desc&limit=<n>
+app.get("/entities/:list/props", async (req, res) => {
+  const { list }   = req.params;
+  const limit      = Math.min(parseInt(req.query.limit) || 50, 50);
+  const sortBy     = req.query.sortBy  ? String(req.query.sortBy)  : null;
+  const sortDir    = req.query.sortDir === "asc" ? 1 : -1;
+
+  let filter = {};
+  if (req.query.filter) {
+    try { filter = JSON.parse(req.query.filter); }
+    catch { return res.status(400).json({ error: "bad_request", message: "Invalid ?filter= JSON" }); }
   }
 
   try {
-    const db = await connectToMongo();
-    const entities = db.collection("entities");
-    const doc = await entities.findOne({ list, key });
-    if (!doc) {
-      return res.status(404).json({ error: "not_found", message: "Entity not found" });
+    const result = await queryByProps(list, filter, { limit, sortBy, sortDir });
+    if (result.error === "page_not_found") {
+      return res.status(404).json({ error: "page_not_found", message: `No page found for key='${list}'` });
     }
-    return res.json(stripMongoId(doc));
+    return res.json({ list, filter, results: result.results.map(strip) });
+  } catch (err) {
+    console.error("GET /entities/:list/props failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+app.get("/entities/:list/:key/similar", async (req, res) => {
+  const { list, key } = req.params;
+  const limit = Math.min(parseInt(req.query.limit) || 50, 50);
+
+  try {
+    const result = await getSimilarEntities(list, key, { limit });
+    if (result.error === "not_found")    return res.status(404).json({ error: "not_found",    message: "Entity not found" });
+    if (result.error === "no_embedding") return res.status(404).json({ error: "not_found",    message: "Entity has no embedding" });
+    return res.json({ list, key, results: result.results.map(strip) });
+  } catch (err) {
+    console.error("GET /entities/:list/:key/similar failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+app.get("/entities/:list/:key", async (req, res) => {
+  const { list, key } = req.params;
+  try {
+    const doc = await getEntity(list, key);
+    if (!doc) return res.status(404).json({ error: "not_found", message: "Entity not found" });
+    return res.json(stripKeepSummary(doc));
   } catch (err) {
     console.error("GET /entities/:list/:key failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
 
-// Create new entity (server-generated key)
 app.post("/entities/:list", requireAdminSession, async (req, res) => {
-  const list = String(req.params.list || "");
-  if (!list) {
-    return res.status(400).json({ error: "bad_request", message: "Missing list" });
-  }
+  const { list } = req.params;
+  const payload  = { ...(req.body || {}) };
+  delete payload._id;
+  delete payload.list;
+  delete payload.key;
 
   try {
-    const db = await connectToMongo();
-    const pages = db.collection("pages");
-    const entities = db.collection("entities");
-
-    const pageDoc = await pages.findOne({ key: list });
-    if (!pageDoc) {
-      return res.status(404).json({ error: "page_not_found", message: `No page found for key='${list}'` });
-    }
-
-    const now = new Date();
-    const payload = { ...(req.body || {}) };
-
-    // Prevent clients from setting identifiers.
-    delete payload._id;
-    delete payload.list;
-    delete payload.key;
-
-    const name = String(payload.name || "").trim();
-    if (!name) {
-      return res.status(400).json({ error: "bad_request", message: "Missing name" });
-    }
-
-    const reference = payload.reference != null ? String(payload.reference).trim() : null;
-
-    // Country code best-effort: prefer `country`, else first of `countries`.
-    let countryCode = null;
-    if (payload.country) {
-      countryCode = String(payload.country).toUpperCase();
-    } else if (Array.isArray(payload.countries) && payload.countries.length > 0) {
-      countryCode = String(payload.countries[0]).toUpperCase();
-    }
-
-    const baseKey = makeKeyFromPageTags({
-      tags: pageDoc.tags,
-      name,
-      reference,
-      countryCode
-    });
-
-    if (!baseKey) {
-      return res.status(400).json({ error: "bad_request", message: "Could not derive key" });
-    }
-
-    // Ensure uniqueness within the list by suffixing -2, -3, ... if needed.
-    let key = baseKey;
-    let i = 2;
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const existing = await entities.findOne({ list, key });
-      if (!existing) break;
-      key = `${baseKey}-${i++}`;
-    }
-
-    const doc = {
-      ...payload,
-      list,
-      key,
-      updatedAt: now,
-      createdAt: payload.createdAt ? payload.createdAt : now
-    };
-
-    await entities.insertOne(doc);
-    return res.status(201).json(stripMongoId(doc));
+    const result = await createEntity(list, payload);
+    if (result.error === "page_not_found") return res.status(404).json({ error: "page_not_found", message: `No page found for key='${list}'` });
+    if (result.error === "missing_name")   return res.status(400).json({ error: "bad_request",    message: "Missing name" });
+    if (result.error === "bad_key")        return res.status(400).json({ error: "bad_request",    message: "Could not derive key" });
+    return res.status(201).json(strip(result.doc));
   } catch (err) {
-    if (err && (err.code === 11000 || String(err).includes("E11000"))) {
+    if (err?.code === 11000 || String(err).includes("E11000")) {
       return res.status(409).json({ error: "conflict", message: "Entity already exists" });
     }
     console.error("POST /entities/:list failed:", err);
@@ -485,338 +316,162 @@ app.post("/entities/:list", requireAdminSession, async (req, res) => {
 });
 
 app.put("/entities/:list/:key", requireAdminSession, async (req, res) => {
-  const list = String(req.params.list || "");
-  const key = String(req.params.key || "");
-  if (!list || !key) {
-    return res.status(400).json({ error: "bad_request", message: "Missing list or key" });
-  }
+  const { list, key } = req.params;
+  const patch = { ...(req.body || {}) };
+  delete patch._id;
+  delete patch.list;
+  delete patch.key;
 
   try {
-    const db = await connectToMongo();
-    const entities = db.collection("entities");
-
-    const now = new Date();
-    const patch = { ...(req.body || {}) };
-    // Prevent changing identifiers
-    delete patch._id;
-    delete patch.list;
-    delete patch.key;
-
-    const result = await entities.findOneAndUpdate(
-      { list, key },
-      { $set: { ...patch, updatedAt: now } },
-      { returnDocument: "after" }
-    );
-
-    const doc = result?.value ?? result; // supports both driver behaviors
-
-    if (!doc) {
-    return res.status(404).json({ error: "not_found", message: "Entity not found" });
-    }
-
-    return res.json(stripMongoId(doc));
+    const doc = await updateEntity(list, key, patch);
+    if (!doc) return res.status(404).json({ error: "not_found", message: "Entity not found" });
+    return res.json(strip(doc));
   } catch (err) {
     console.error("PUT /entities/:list/:key failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
 
-// List all pages (thin wrapper around the `pages` collection)
-app.get("/pages", async (_req, res) => {
+// ---- Geo search ----
+
+app.get("/entities/nearby", async (req, res) => {
+  const lat      = parseFloat(req.query.lat);
+  const lon      = parseFloat(req.query.lon);
+  const radiusKm = parseFloat(req.query.radius) || 50;
+  const listFilter = req.query.list ? String(req.query.list) : null;
+  const limit    = Math.min(parseInt(req.query.limit) || 50, 50);
+
+  if (isNaN(lat) || isNaN(lon)) {
+    return res.status(400).json({ error: "bad_request", message: "Missing or invalid ?lat= and ?lon=" });
+  }
+
   try {
-    const db = await connectToMongo();
-    const pages = db.collection("pages");
-
-    const pageDocs = await pages
-      .find({})
-      .sort({ name: 1, key: 1 })
-      .toArray();
-
-    return res.json({
-      pages: pageDocs.map(stripMongoId)
-    });
+    const results = await getEntitiesNearPoint(lon, lat, { radiusKm, listFilter, limit });
+    return res.json({ lat, lon, radiusKm, results: results.map(strip) });
   } catch (err) {
-    console.error("GET /pages failed:", err);
-    return res.status(500).json({
-      error: "internal_error",
-      message: err
-    });
+    console.error("GET /entities/nearby failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
 
-// Entities by country code (supports `country: "BE"` and `countries: ["BE", ...]`)
+app.get("/entities/:list/:key/nearby", async (req, res) => {
+  const { list, key } = req.params;
+  const radiusKm = parseFloat(req.query.radius) || 50;
+  const limit    = Math.min(parseInt(req.query.limit) || 50, 50);
+
+  try {
+    const result = await getEntitiesNearEntity(list, key, { radiusKm, limit });
+    if (result.error === "not_found")   return res.status(404).json({ error: "not_found",   message: "Entity not found" });
+    if (result.error === "no_location") return res.status(404).json({ error: "not_found",   message: "Entity has no location" });
+    return res.json({ list, key, radiusKm, ...result.source, results: result.results.map(strip) });
+  } catch (err) {
+    console.error("GET /entities/:list/:key/nearby failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+// ---- Countries / cities ----
+
 app.get("/countries/:code", async (req, res) => {
   const code = String(req.params.code || "").toUpperCase();
-  if (!code) {
-    return res.status(400).json({ error: "bad_request", message: "Missing country code" });
-  }
-
   try {
-    const db = await connectToMongo();
-    const entities = db.collection("entities");
-
-    const query = { $or: [{ country: code }, { countries: code }] };
-
-    const entityDocs = await entities
-      .find(query)
-      .sort({ name: 1, key: 1 })
-      .toArray();
-
-    const all = entityDocs.map(stripMongoId);
-
-    // Hoist the canonical country entity (list === "countries")
-    const countryEntityIndex = all.findIndex(e => e.list === "countries");
-    const countryEntity = countryEntityIndex >= 0 ? all[countryEntityIndex] : null;
-
-    const rest = countryEntityIndex >= 0
-      ? all.filter((_, i) => i !== countryEntityIndex)
-      : all;
-
-    return res.json({
-      country: countryEntity,
-      entities: rest
-    });
+    const result = await getEntitiesByCountry(code);
+    return res.json({ country: strip(result.country), entities: result.entities.map(strip) });
   } catch (err) {
     console.error("GET /countries/:code failed:", err);
-    return res.status(500).json({
-      error: "internal_error",
-      message: err
-    });
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
 
-// Entities by city (key is dashed; data is stored under display name)
 app.get("/cities/:key", async (req, res) => {
-  const key = String(req.params.key || "");
-  const city = cityKeyToDisplayName(key);
-  if (!city) {
-    return res.status(400).json({ error: "bad_request", message: "Missing city key" });
-  }
+  const city = cityKeyToDisplayName(req.params.key);
+  if (!city) return res.status(400).json({ error: "bad_request", message: "Missing city key" });
 
   try {
-    const db = await connectToMongo();
-    const entities = db.collection("entities");
-
-    const query = { city };
-
-    const entityDocs = await entities
-      .find(query)
-      .sort({ name: 1, key: 1 })
-      .toArray();
-
-    const all = entityDocs.map(stripMongoId);
-
-    // Hoist the canonical city entity (list === "cities")
-    const cityEntityIndex = all.findIndex(e => e.list === "cities");
-    const cityEntity = cityEntityIndex >= 0 ? all[cityEntityIndex] : null;
-
-    const rest = cityEntityIndex >= 0
-      ? all.filter((_, i) => i !== cityEntityIndex)
-      : all;
-
-    return res.json({
-      city: cityEntity,
-      entities: rest
-    });
+    const result = await getEntitiesByCity(city);
+    return res.json({ city: strip(result.city), entities: result.entities.map(strip) });
   } catch (err) {
     console.error("GET /cities/:key failed:", err);
-    return res.status(500).json({
-      error: "internal_error",
-      message: err
-    });
-  }
-});
-
-// --- Semantic search ---
-
-// GET /entities?search=<query>&list=<optional-list-filter>&limit=<optional>
-app.get("/entities", async (req, res) => {
-  const query      = String(req.query.search || "").trim();
-  const listFilter = req.query.list ? String(req.query.list) : null;
-  const limit      = Math.min(parseInt(req.query.limit) || 10, 50);
-
-  if (!query) {
-    return res.status(400).json({ error: "bad_request", message: "Missing ?search=" });
-  }
-  if (!openai) {
-    return res.status(503).json({ error: "unavailable", message: "Semantic search not configured" });
-  }
-
-  try {
-    const db       = await connectToMongo();
-    const entities = db.collection("entities");
-
-    const { data } = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: query,
-    });
-
-    const pipeline = [
-      {
-        $vectorSearch: {
-          index:        "wikiEmbedding",
-          path:         "wikiEmbedding",
-          queryVector:  data[0].embedding,
-          numCandidates: limit * 5,
-          limit,
-        },
-      },
-      { $project: { name: 1, list: 1, key: 1, icons: 1, score: { $meta: "vectorSearchScore" } } },
-    ];
-
-    if (listFilter) pipeline.splice(1, 0, { $match: { list: listFilter } });
-
-    pipeline.push(
-      { $lookup: { from: "pages", localField: "list", foreignField: "key", as: "pageInfo" } },
-      { $unwind: { path: "$pageInfo", preserveNullAndEmptyArrays: true } },
-      { $project: {
-        name: 1, list: 1, key: 1, icons: 1, score: 1,
-        page: { name: "$pageInfo.name", icon: "$pageInfo.icon", key: "$pageInfo.key" },
-      }},
-    );
-
-    const results = await entities.aggregate(pipeline).toArray();
-    return res.json({ query, results: results.map(stripMongoId) });
-  } catch (err) {
-    console.error("GET /entities?search= failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
 
-// GET /entities/:list/:key/similar?limit=<optional>
-app.get("/entities/:list/:key/similar", async (req, res) => {
-  const list  = String(req.params.list || "");
-  const key   = String(req.params.key  || "");
-  const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+// ---- Natural language search ----
 
-  if (!list || !key) {
-    return res.status(400).json({ error: "bad_request", message: "Missing list or key" });
-  }
+app.post("/search", async (req, res) => {
+  const query = String(req.body?.query || "").trim();
+  if (!query) return res.status(400).json({ error: "bad_request", message: "Missing query" });
 
   try {
-    const db       = await connectToMongo();
-    const entities = db.collection("entities");
-
-    const source = await entities.findOne({ list, key }, { projection: { wikiEmbedding: 1, name: 1 } });
-    if (!source) {
-      return res.status(404).json({ error: "not_found", message: "Entity not found" });
-    }
-    if (!source.wikiEmbedding) {
-      return res.status(404).json({ error: "not_found", message: "Entity has no embedding" });
-    }
-
-    const pipeline = [
-      {
-        $vectorSearch: {
-          index:         "wikiEmbedding",
-          path:          "wikiEmbedding",
-          queryVector:   source.wikiEmbedding,
-          numCandidates: (limit + 1) * 5,
-          limit:         limit + 1,  // fetch one extra to filter out the source itself
-        },
-      },
-      { $project: { name: 1, list: 1, key: 1, icons: 1, score: { $meta: "vectorSearchScore" } } },
-      { $lookup: { from: "pages", localField: "list", foreignField: "key", as: "pageInfo" } },
-      { $unwind: { path: "$pageInfo", preserveNullAndEmptyArrays: true } },
-      { $project: {
-        name: 1, list: 1, key: 1, icons: 1, score: 1,
-        page: { name: "$pageInfo.name", icon: "$pageInfo.icon", key: "$pageInfo.key" },
-      }},
-    ];
-
-    const results = await entities.aggregate(pipeline).toArray();
-    const filtered = results.filter(r => r.score < 0.9999).slice(0, limit);
-
-    return res.json({ list, key, results: filtered.map(stripMongoId) });
+    const result = await naturalLanguageSearch(query);
+    return res.json({ ...result, results: result.results.map(strip) });
   } catch (err) {
-    console.error("GET /entities/:list/:key/similar failed:", err);
+    console.error("POST /search failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
 
-// --- Wiki search ---
+// ---- Wiki search ----
+
 app.get("/wiki", async (req, res) => {
   const q = String(req.query.q || "").trim();
-  if (!q) {
-    return res.status(400).json({ error: "bad_request", message: "Missing ?q=" });
-  }
+  if (!q) return res.status(400).json({ error: "bad_request", message: "Missing ?q=" });
 
   try {
     const params = new URLSearchParams({
-      action: "query",
-      list: "search",
-      srsearch: q,
-      format: "json",
-      srlimit: "1"
+      action: "query", list: "search", srsearch: q, format: "json", srlimit: "1",
     });
-
-    const url = `https://en.wikipedia.org/w/api.php?${params.toString()}`;
-
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent": "andrewzc/1.0 (personal project)"
-      }
+    const response = await fetch(`https://en.wikipedia.org/w/api.php?${params}`, {
+      headers: { "User-Agent": "andrewzc/1.0 (personal project)" },
     });
+    if (!response.ok) return res.status(502).json({ error: "wiki_error", message: "Wikipedia request failed" });
 
-    if (!response.ok) {
-      return res.status(502).json({ error: "wiki_error", message: "Wikipedia request failed" });
-    }
+    const json  = await response.json();
+    const title = json?.query?.search?.[0]?.title;
+    if (!title)  return res.json({ link: null });
 
-    const json = await response.json();
-
-    const title =
-      json?.query?.search?.[0]?.title;
-
-    if (!title) {
-      return res.json({ link: null });
-    }
-
-    const encoded = encodeURIComponent(title.replace(/ /g, "_"));
-    const link = `https://en.wikipedia.org/wiki/${encoded}`;
-
+    const link = `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
     return res.json({ link });
-
   } catch (err) {
     console.error("GET /wiki failed:", err);
-    return res.status(500).json({ error: "internal_error", message: "Wiki lookup failed" });
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
 
+// ---- Index ----
+
 app.get("/", (_req, res) => {
-  res.type("text/plain").send(
-    [
-      "andrewzc-api",
-      "",
-      "GET /healthz",
-      "GET /pages",
-      "GET /pages/:id",
-      "GET /countries/:code",
-      "GET /cities/:key",
-      "POST /admin/login",
-      "POST /admin/logout",
-      "GET /admin/me",
-      "GET /entities?search=<query>",
-      "GET /entities/:list/:key",
-      "GET /entities/:list/:key/similar",
-      "POST /entities/:list (admin)",
-      "PUT /entities/:list/:key (admin)",
-      "GET /wiki"
-    ].join("\n")
-  );
+  res.type("text/plain").send([
+    "andrewzc-api",
+    "",
+    "GET  /healthz",
+    "GET  /pages",
+    "GET  /pages/summaries",
+    "GET  /pages/:id",
+    "GET  /countries/:code",
+    "GET  /cities/:key",
+    "POST /admin/login",
+    "POST /admin/logout",
+    "GET  /admin/me",
+    "GET  /entities?search=<query>",
+    "GET  /entities/nearby?lat=&lon=&radius=&list=&limit=",
+    "GET  /entities/:list/props?filter=<json>&sortBy=&sortDir=&limit=",
+    "GET  /entities/:list/:key",
+      "GET  /entities/:list/:key/nearby?radius=&limit=",
+      "GET  /entities/:list/:key/similar",
+    "POST /entities/:list          (admin)",
+    "PUT  /entities/:list/:key     (admin)",
+    "POST /search",
+    "GET  /wiki",
+  ].join("\n"));
 });
+
+// ---- Start ----
 
 (async () => {
   try {
     await ensureIndexes();
-
-//    if (process.env.CREATE_ADMIN === "1") {
-//      await createAdminAccountOnce();
-//      process.exit(0);
-//    }
-
-    app.listen(PORT, () => {
-      console.log(`API listening on http://localhost:${PORT}`);
-    });
+    app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   } catch (err) {
     console.error("Startup failed:", err);
     process.exit(1);
