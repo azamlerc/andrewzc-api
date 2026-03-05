@@ -407,8 +407,8 @@ app.post("/chat", async (req, res) => {
   }
 
   try {
-    const reply = await chat(Array.isArray(history) ? history : [], message.trim());
-    return res.json({ reply });
+    const result = await chat(Array.isArray(history) ? history : [], message.trim());
+    return res.json(result);
   } catch (err) {
     console.error("POST /chat failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });

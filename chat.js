@@ -257,15 +257,9 @@ async function executeTool(name, input) {
 }
 
 // ---- Main chat function ----
-// Takes a conversation history (array of {role, content} messages) and
-// returns the assistant's response as a string.
-//
-// The caller is responsible for maintaining history between turns:
-//   history = []
-//   response1 = await chat(history, "Hi!")
-//   history.push({ role: "user", content: "Hi!" }, { role: "assistant", content: response1 })
-//   response2 = await chat(history, "What metros have you completed?")
-//   ...
+// Returns { reply, images, list } where images is an array of filenames
+// from the most recently fetched entity that has photos, and list is its list key.
+// Images are extracted server-side so the bot never needs to embed them in text.
 
 export async function chat(history, userMessage) {
   if (!process.env.ANTHROPIC_API_KEY) {
@@ -284,6 +278,10 @@ export async function chat(history, userMessage) {
     { role: "user", content: userMessage },
   ];
 
+  // Track images from getEntity calls
+  let images = null;
+  let imageList = null;
+
   // Agentic loop — keep going until Claude stops calling tools
   while (true) {
     const response = await client.messages.create({
@@ -297,12 +295,13 @@ export async function chat(history, userMessage) {
     // Accumulate this response into the message history
     messages.push({ role: "assistant", content: response.content });
 
-    // If Claude is done (no tool calls), return the text response
+    // If Claude is done (no tool calls), return text + any collected images
     if (response.stop_reason === "end_turn") {
-      return response.content
+      const reply = response.content
         .filter(b => b.type === "text")
         .map(b => b.text)
         .join("");
+      return { reply, images, list: imageList };
     }
 
     // Execute all tool calls and feed results back
@@ -317,6 +316,13 @@ export async function chat(history, userMessage) {
             } catch (err) {
               result = { error: String(err.message) };
             }
+
+            // Capture images from getEntity results
+            if (toolUse.name === "getEntity" && result.images && result.images.length) {
+              images    = result.images;
+              imageList = result.list;
+            }
+
             return {
               type:        "tool_result",
               tool_use_id: toolUse.id,
