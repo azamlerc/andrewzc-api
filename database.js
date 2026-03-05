@@ -146,7 +146,7 @@ export async function getEntitiesByFilter(filter = {}, { limit = 50, sortBy = nu
     { $lookup: { from: "pages", localField: "list", foreignField: "key", as: "pageInfo" } },
     { $unwind: { path: "$pageInfo", preserveNullAndEmptyArrays: true } },
     { $project: {
-      name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1,
+      name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, been: 1,
       page: { name: "$pageInfo.name", icon: "$pageInfo.icon", key: "$pageInfo.key" },
     }},
   ];
@@ -185,7 +185,7 @@ export async function getEntitiesByCity(city) {
 // ---- Geo search ----
 
 const GEO_PROJECTION = {
-  name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, coords: 1,
+  name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, coords: 1, been: 1,
   distanceKm: { $round: [{ $divide: ["$dist.calculated", 1000] }, 1] },
 };
 
@@ -249,7 +249,7 @@ export async function searchByName(name, { listFilter = null, limit = 50 } = {})
     { $lookup: { from: "pages", localField: "list", foreignField: "key", as: "pageInfo" } },
     { $unwind: { path: "$pageInfo", preserveNullAndEmptyArrays: true } },
     { $project: {
-      name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1,
+      name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, been: 1,
       page: { name: "$pageInfo.name", icon: "$pageInfo.icon", key: "$pageInfo.key" },
     }},
   ];
@@ -281,7 +281,7 @@ export async function queryByProps(list, filter = {}, { limit = 50, sortBy = nul
     { $lookup: { from: "pages", localField: "list", foreignField: "key", as: "pageInfo" } },
     { $unwind: { path: "$pageInfo", preserveNullAndEmptyArrays: true } },
     { $project: {
-      name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, props: 1,
+      name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, props: 1, been: 1,
       page: { name: "$pageInfo.name", icon: "$pageInfo.icon", key: "$pageInfo.key" },
     }},
   ];
@@ -293,7 +293,7 @@ export async function queryByProps(list, filter = {}, { limit = 50, sortBy = nul
 // ---- Semantic search ----
 
 const SEARCH_PROJECTION = {
-  name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1,
+  name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, been: 1,
   score: { $meta: "vectorSearchScore" },
 };
 
