@@ -95,34 +95,17 @@ const TOOLS = [
     type: "function",
     function: {
       name: "findNearbyEntities",
-      description: "Find entities geographically near a lat/lon point. Use when the query mentions a specific location by coordinates.",
+      description: "Find entities geographically near a location. Use whenever the user asks for things near a place — whether they provide coordinates directly or name a place like 'near the Eiffel Tower', 'near Brussels', 'near my house'. If the user names a place rather than giving coordinates, use your knowledge to supply the lat/lon for that place.",
       parameters: {
         type: "object",
         properties: {
-          lat:      { type: "number", description: "Latitude" },
-          lon:      { type: "number", description: "Longitude" },
+          lat:      { type: "number", description: "Latitude of the location" },
+          lon:      { type: "number", description: "Longitude of the location" },
           radiusKm: { type: "number", description: "Search radius in km, default 50" },
           list:     { type: "string", description: "Optional list key to restrict search" },
           limit:    { type: "number", description: "Max results, default 50" },
         },
         required: ["lat", "lon"],
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "findEntitiesNearEntity",
-      description: "Find entities geographically near a known entity. Use for queries like 'things near Berlin Hauptbahnhof', 'what's near the Eiffel Tower metro station', 'stations close to Amsterdam Centraal'.",
-      parameters: {
-        type: "object",
-        properties: {
-          list:     { type: "string", description: "List key of the reference entity" },
-          key:      { type: "string", description: "Key of the reference entity" },
-          radiusKm: { type: "number", description: "Search radius in km, default 50" },
-          limit:    { type: "number", description: "Max results, default 50" },
-        },
-        required: ["list", "key"],
       },
     },
   },
@@ -237,6 +220,7 @@ Guidelines:
 - For country filters use 2-letter ISO codes (BE, FR, DE, GB, US etc).
 - For city filters use the city display name as it would appear in the data (e.g. "Paris", "New York", "Den Haag").
 - Prefer filterEntities for queries that combine a list + location.
+- For queries asking for things near a named place (e.g. 'near the Eiffel Tower', 'near Brussels'), use findNearbyEntities with coordinates you derive from your own knowledge — do not try to look the place up in the database.
 - Prefer searchByMeaning for open-ended descriptive queries. Do NOT add a list filter to searchByMeaning unless the user explicitly names a specific list.
 - Prefer searchByName when the user is looking for something by its name.
 - If the query is ambiguous, prefer filterEntities or searchByMeaning.`;
