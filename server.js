@@ -17,6 +17,7 @@ import {
 } from "./database.js";
 import { simplify, cityKeyToDisplayName } from "./utils.js";
 import { naturalLanguageSearch } from "./search.js";
+import { chat, preloadContext } from "./chat.js";
 
 dotenv.config();
 
@@ -32,9 +33,10 @@ const allowlist = [
 const PORT           = process.env.PORT || 3000;
 const SESSION_PEPPER = process.env.SESSION_PEPPER;
 
-if (!process.env.MONGODB_URI)  { console.error("Missing MONGODB_URI");  process.exit(1); }
-if (!process.env.MONGODB_DB)   { console.error("Missing MONGODB_DB");   process.exit(1); }
-if (!SESSION_PEPPER)           { console.error("Missing SESSION_PEPPER"); process.exit(1); }
+if (!process.env.MONGODB_URI)        { console.error("Missing MONGODB_URI");        process.exit(1); }
+if (!process.env.MONGODB_DB)         { console.error("Missing MONGODB_DB");         process.exit(1); }
+if (!SESSION_PEPPER)                 { console.error("Missing SESSION_PEPPER");      process.exit(1); }
+if (!process.env.ANTHROPIC_API_KEY)  { console.error("Missing ANTHROPIC_API_KEY");  process.exit(1); }
 
 // ---- App setup ----
 
@@ -396,6 +398,23 @@ app.get("/cities/:key", async (req, res) => {
   }
 });
 
+// ---- Chat ----
+
+app.post("/chat", async (req, res) => {
+  const { history, message } = req.body || {};
+  if (!message || typeof message !== "string") {
+    return res.status(400).json({ error: "bad_request", message: "Missing message" });
+  }
+
+  try {
+    const reply = await chat(Array.isArray(history) ? history : [], message.trim());
+    return res.json({ reply });
+  } catch (err) {
+    console.error("POST /chat failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 // ---- Natural language search ----
 
 app.post("/search", async (req, res) => {
@@ -461,6 +480,7 @@ app.get("/", (_req, res) => {
       "GET  /entities/:list/:key/similar",
     "POST /entities/:list          (admin)",
     "PUT  /entities/:list/:key     (admin)",
+    "POST /chat",
     "POST /search",
     "GET  /wiki",
   ].join("\n"));
@@ -471,6 +491,7 @@ app.get("/", (_req, res) => {
 (async () => {
   try {
     await ensureIndexes();
+    await preloadContext();
     app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   } catch (err) {
     console.error("Startup failed:", err);
