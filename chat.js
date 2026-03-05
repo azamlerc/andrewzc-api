@@ -16,7 +16,7 @@ import {
   embedText,
 } from "./database.js";
 
-const MODEL = "claude-haiku-4-5-20251001";
+const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 1024;
 const CONTEXT_RAW = "https://raw.githubusercontent.com/azamlerc/hello-context/main";
 
@@ -24,9 +24,11 @@ const CONTEXT_RAW = "https://raw.githubusercontent.com/azamlerc/hello-context/ma
 // Fetched once at startup and cached for the lifetime of the process.
 
 let contextCache = null;
+let contextCachedAt = 0;
+const CONTEXT_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 async function loadContext() {
-  if (contextCache) return contextCache;
+  if (contextCache && Date.now() - contextCachedAt < CONTEXT_TTL_MS) return contextCache;
 
   const [systemPromptRaw, websiteIntro, apiContext] = await Promise.all([
     fetch(`${CONTEXT_RAW}/system-prompt.md`).then(r => r.text()),
@@ -50,6 +52,7 @@ ${websiteIntro}
 ${apiContext}`;
 
   contextCache = systemPrompt;
+  contextCachedAt = Date.now();
   return contextCache;
 }
 
@@ -297,10 +300,15 @@ export async function chat(history, userMessage) {
 
     // If Claude is done (no tool calls), return text + any collected images
     if (response.stop_reason === "end_turn") {
-      const reply = response.content
+      const raw = response.content
         .filter(b => b.type === "text")
         .map(b => b.text)
         .join("");
+      // Strip all markdown image/link syntax referencing image CDN URLs
+      const reply = raw
+        .replace(/\[?!?\[[^\]]*\]\([^)]*images\.andrewzc\.net[^)]*\)\]?(?:\([^)]*\))?/g, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
       return { reply, images, list: imageList };
     }
 
@@ -316,6 +324,8 @@ export async function chat(history, userMessage) {
             } catch (err) {
               result = { error: String(err.message) };
             }
+
+            console.log(`[chat] tool=${toolUse.name} input=${JSON.stringify(toolUse.input)} images=${result?.images?.length ?? 0} caption=${!!result?.caption}`);
 
             // Capture images from getEntity results
             if (toolUse.name === "getEntity" && result.images && result.images.length) {

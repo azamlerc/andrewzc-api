@@ -17,7 +17,8 @@ import {
 } from "./database.js";
 import { simplify, cityKeyToDisplayName } from "./utils.js";
 import { naturalLanguageSearch } from "./search.js";
-import { chat, preloadContext } from "./chat.js";
+import { chat, preload } from "./agent.js";
+import { helloBot } from "./agent-hello.js";
 
 dotenv.config();
 
@@ -400,20 +401,25 @@ app.get("/cities/:key", async (req, res) => {
 
 // ---- Chat ----
 
-app.post("/chat", async (req, res) => {
-  const { history, message } = req.body || {};
-  if (!message || typeof message !== "string") {
-    return res.status(400).json({ error: "bad_request", message: "Missing message" });
-  }
+function makeChatHandler(bot) {
+  return async (req, res) => {
+    const { history, message } = req.body || {};
+    if (!message || typeof message !== "string") {
+      return res.status(400).json({ error: "bad_request", message: "Missing message" });
+    }
+    try {
+      const result = await chat(bot, Array.isArray(history) ? history : [], message.trim());
+      return res.json(result);
+    } catch (err) {
+      console.error(`POST /chat/${bot.name} failed:`, err);
+      return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+    }
+  };
+}
 
-  try {
-    const result = await chat(Array.isArray(history) ? history : [], message.trim());
-    return res.json(result);
-  } catch (err) {
-    console.error("POST /chat failed:", err);
-    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
-  }
-});
+app.post("/chat/hello", makeChatHandler(helloBot));
+// app.post("/chat/senza",     makeChatHandler(senzaBot));     // coming soon
+// app.post("/chat/interview", makeChatHandler(interviewBot)); // coming soon
 
 // ---- Natural language search ----
 
@@ -491,7 +497,7 @@ app.get("/", (_req, res) => {
 (async () => {
   try {
     await ensureIndexes();
-    await preloadContext();
+    await preload(helloBot);
     app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   } catch (err) {
     console.error("Startup failed:", err);
