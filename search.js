@@ -202,6 +202,20 @@ async function executeTool(name, args) {
   }
 }
 
+// ---- Emoji picker ----
+
+async function pickEmoji(query, openai) {
+  const res = await openai.chat.completions.create({
+    model:      "gpt-4o-mini",
+    max_tokens: 5,
+    messages:   [
+      { role: "system", content: "Reply with exactly one emoji that best represents the concept. No words, no punctuation, just the emoji." },
+      { role: "user",   content: query },
+    ],
+  });
+  return res.choices[0].message.content.trim();
+}
+
 // ---- Main export ----
 
 export async function naturalLanguageSearch(query) {
@@ -227,8 +241,9 @@ Guidelines:
 - Prefer searchByName when the user is looking for something by its name.
 - If the query is ambiguous, prefer filterEntities or searchByMeaning.`;
 
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  const response = await openai.chat.completions.create({
+  const openai   = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const [response, icon] = await Promise.all([
+    openai.chat.completions.create({
     model:      "gpt-4o-mini",
     messages:   [
       { role: "system",  content: systemPrompt },
@@ -236,14 +251,16 @@ Guidelines:
     ],
     tools:       TOOLS,
     tool_choice: "required",
-  });
+    }),
+    pickEmoji(query, openai),
+  ]);
 
   const message = response.choices[0].message;
 
   // Execute all tool calls (usually just one, occasionally two)
   const toolCalls = message.tool_calls ?? [];
   if (toolCalls.length === 0) {
-    return { query, results: [], tool: null };
+    return { query, icon, results: [], tool: null };
   }
 
   const calls = await Promise.all(
@@ -273,8 +290,9 @@ Guidelines:
 
   return {
     query,
-    tool:  calls.length === 1 ? calls[0].tool : calls.map(c => c.tool),
-    args:  calls.length === 1 ? calls[0].args : calls.map(c => c.args),
+    icon,
+    tool:    calls.length === 1 ? calls[0].tool : calls.map(c => c.tool),
+    args:    calls.length === 1 ? calls[0].args : calls.map(c => c.args),
     results: merged,
   };
 }

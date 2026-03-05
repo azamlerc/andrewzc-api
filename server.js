@@ -62,7 +62,7 @@ function cleanError(err) {
 // Strip internal fields from all responses.
 function strip(doc) {
   if (!doc) return doc;
-  const { _id, wikiSummary, wikiEmbedding, enrichedAt, ...rest } = doc;
+  const { _id, wikiSummary, wikiEmbedding, enrichedAt, __isNew, ...rest } = doc;
   return rest;
 }
 
