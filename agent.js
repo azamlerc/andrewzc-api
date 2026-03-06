@@ -12,6 +12,9 @@ const TTL_MS     = 5 * 60 * 1000; // 5 minutes
 const contextCaches = new Map(); // contextUrl -> { prompt, cachedAt }
 
 async function loadContext(bot) {
+  // Bots can provide their own loadSystemPrompt() for custom assembly logic
+  if (bot.loadSystemPrompt) return bot.loadSystemPrompt();
+
   const cached = contextCaches.get(bot.contextUrl);
   if (cached && Date.now() - cached.cachedAt < TTL_MS) return cached.prompt;
 
@@ -92,7 +95,15 @@ export async function chat(bot, history, userMessage) {
 
             // Capture images from any tool call that returns them
             if (result?.images?.length) {
-              images    = result.images;
+              const all = result.images;
+              if (all.length <= 3) {
+                images = all;
+              } else {
+                // Pick 3 distinct random images
+                const picked = new Set();
+                while (picked.size < 3) picked.add(all[Math.floor(Math.random() * all.length)]);
+                images = [...picked];
+              }
               imageList = result.list;
             }
 
@@ -116,5 +127,5 @@ export async function preload(bot) {
     loadContext(bot),
     bot.getExtraContext ? bot.getExtraContext() : Promise.resolve(),
   ]);
-  console.log(`[${bot.name}] context loaded`);
+  console.log(`[${bot.name}] context loaded (${bot.name})`);
 }

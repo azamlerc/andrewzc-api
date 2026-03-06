@@ -19,6 +19,7 @@ import { simplify, cityKeyToDisplayName } from "./utils.js";
 import { naturalLanguageSearch } from "./search.js";
 import { chat, preload } from "./agent.js";
 import { helloBot } from "./agent-hello.js";
+import { senzaBot } from "./agent-senza.js";
 
 dotenv.config();
 
@@ -417,8 +418,8 @@ function makeChatHandler(bot) {
   };
 }
 
-app.post("/chat/hello", makeChatHandler(helloBot));
-// app.post("/chat/senza",     makeChatHandler(senzaBot));     // coming soon
+app.post("/chat/hello",     makeChatHandler(helloBot));
+app.post("/chat/senza",     makeChatHandler(senzaBot));
 // app.post("/chat/interview", makeChatHandler(interviewBot)); // coming soon
 
 // ---- Natural language search ----
@@ -486,7 +487,8 @@ app.get("/", (_req, res) => {
       "GET  /entities/:list/:key/similar",
     "POST /entities/:list          (admin)",
     "PUT  /entities/:list/:key     (admin)",
-    "POST /chat",
+    "POST /chat/hello",
+    "POST /chat/senza",
     "POST /search",
     "GET  /wiki",
   ].join("\n"));
@@ -497,7 +499,10 @@ app.get("/", (_req, res) => {
 (async () => {
   try {
     await ensureIndexes();
-    await preload(helloBot);
+    await Promise.all([
+      preload(helloBot),
+      preload(senzaBot),
+    ]);
     app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   } catch (err) {
     console.error("Startup failed:", err);
