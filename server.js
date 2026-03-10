@@ -17,6 +17,7 @@ import {
 } from "./database.js";
 import { simplify, cityKeyToDisplayName } from "./utils.js";
 import { naturalLanguageSearch } from "./search.js";
+import { getCoordsFromUrl } from "./wiki.js";
 import { chat, preload } from "./agent.js";
 import { helloBot } from "./agent-hello.js";
 import { senzaBot } from "./agent-senza.js";
@@ -449,6 +450,29 @@ app.post("/search", async (req, res) => {
   }
 });
 
+// ---- Coords from URL ----
+
+app.get("/coords", async (req, res) => {
+  const url  = String(req.query.url || "").trim();
+  const list = String(req.query.list || "").trim();
+  if (!url) return res.status(400).json({ error: "bad_request", message: "Missing ?url=" });
+
+  try {
+    new URL(url); // validate
+  } catch {
+    return res.status(400).json({ error: "bad_request", message: "Invalid URL" });
+  }
+
+  try {
+    const result = await getCoordsFromUrl(url, { list });
+    if (!result) return res.json({ coords: null, location: null });
+    return res.json(result);
+  } catch (err) {
+    console.error("GET /coords failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 // ---- Wiki search ----
 
 app.get("/wiki", async (req, res) => {
@@ -503,6 +527,7 @@ app.get("/", (_req, res) => {
     "POST /chat/hello",
     "POST /chat/senza",
     "POST /search",
+    "GET  /coords?url=&list=",
     "GET  /wiki",
   ].join("\n"));
 });
