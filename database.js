@@ -130,6 +130,12 @@ export async function updateEntity(list, key, patch) {
   return result?.value ?? result ?? null;
 }
 
+export async function deleteEntity(list, key) {
+  const db     = await connectToMongo();
+  const result = await db.collection("entities").findOneAndDelete({ list, key });
+  return result?.value ?? result ?? null;
+}
+
 // ---- General entity filter ----
 
 // Query entities by any MongoDB filter. The router constructs the filter

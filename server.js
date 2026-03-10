@@ -8,7 +8,7 @@ import argon2 from "argon2";
 import {
   ensureIndexes,
   getPage, getPages, getPageSummaries, getPageWithEntities,
-  getEntity, createEntity, updateEntity,
+  getEntity, createEntity, updateEntity, deleteEntity,
   getEntitiesByCountry, getEntitiesByCity,
   getEntitiesNearPoint, getEntitiesNearEntity,
   searchByName, queryByProps,
@@ -336,6 +336,18 @@ app.put("/entities/:list/:key", requireAdminSession, async (req, res) => {
   }
 });
 
+app.delete("/entities/:list/:key", requireAdminSession, async (req, res) => {
+  const { list, key } = req.params;
+  try {
+    const doc = await deleteEntity(list, key);
+    if (!doc) return res.status(404).json({ error: "not_found", message: "Entity not found" });
+    return res.json({ ok: true, deleted: strip(doc) });
+  } catch (err) {
+    console.error("DELETE /entities/:list/:key failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 // ---- Geo search ----
 
 app.get("/entities/nearby", async (req, res) => {
@@ -487,6 +499,7 @@ app.get("/", (_req, res) => {
       "GET  /entities/:list/:key/similar",
     "POST /entities/:list          (admin)",
     "PUT  /entities/:list/:key     (admin)",
+    "DELETE /entities/:list/:key   (admin)",
     "POST /chat/hello",
     "POST /chat/senza",
     "POST /search",
