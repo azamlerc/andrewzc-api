@@ -8,13 +8,20 @@ import argon2 from "argon2";
 import {
   ensureIndexes,
   getPage, getPages, getPageSummaries, getPageWithEntities,
-  getEntity, createEntity, updateEntity, deleteEntity,
+  getEntity, createEntity, updateEntity, appendEntityImages, deleteEntity,
   getEntitiesByCountry, getEntitiesByCity,
   getEntitiesNearPoint, getEntitiesNearEntity,
   searchByName, queryByProps,
   searchByVector, getSimilarEntities, embedText,
   findAccount, findSession, createSession, touchSession, revokeSession,
 } from "./database.js";
+import {
+  imageUploadsConfigured,
+  nextImageIndex,
+  imageFilenameForEntity,
+  isValidEntityImageFilename,
+  presignImageUploadPair,
+} from "./aws.js";
 import { simplify, cityKeyToDisplayName } from "./utils.js";
 import { naturalLanguageSearch } from "./search.js";
 import { getCoordsFromUrl } from "./wiki.js";
@@ -86,6 +93,12 @@ function adminCookieOptions() {
     path:     "/",
     maxAge:   1000 * 60 * 60 * 24 * 365 * 10,
   };
+}
+
+function requireS3Config(res) {
+  if (imageUploadsConfigured()) return true;
+  res.status(503).json({ error: "unavailable", message: "S3 upload not configured" });
+  return false;
 }
 
 // ---- Auth helpers ----
@@ -337,6 +350,58 @@ app.put("/entities/:list/:key", requireAdminSession, async (req, res) => {
   }
 });
 
+app.post("/entities/:list/:key/images/presign", requireAdminSession, async (req, res) => {
+  if (!requireS3Config(res)) return;
+
+  const { list, key } = req.params;
+  const count = Math.min(Math.max(parseInt(req.body?.count) || 1, 1), 20);
+
+  try {
+    const entity = await getEntity(list, key);
+    if (!entity) return res.status(404).json({ error: "not_found", message: "Entity not found" });
+
+    let index = nextImageIndex(entity);
+    const uploads = [];
+
+    for (let i = 0; i < count; i += 1) {
+      const filename = imageFilenameForEntity(entity, index++);
+      uploads.push(await presignImageUploadPair(list, filename));
+    }
+
+    return res.json({ list, key, uploads });
+  } catch (err) {
+    console.error("POST /entities/:list/:key/images/presign failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+app.post("/entities/:list/:key/images/complete", requireAdminSession, async (req, res) => {
+  const { list, key } = req.params;
+  const filenames = Array.isArray(req.body?.filenames) ? req.body.filenames : [];
+  const clean = Array.from(new Set(
+    filenames
+      .map(name => String(name || "").trim())
+      .filter(Boolean)
+  ));
+
+  if (clean.length === 0) {
+    return res.status(400).json({ error: "bad_request", message: "Missing filenames" });
+  }
+
+  if (clean.some(name => !isValidEntityImageFilename(key, name))) {
+    return res.status(400).json({ error: "bad_request", message: "Invalid filename for entity" });
+  }
+
+  try {
+    const doc = await appendEntityImages(list, key, clean);
+    if (!doc) return res.status(404).json({ error: "not_found", message: "Entity not found" });
+    return res.json({ ok: true, entity: strip(doc), added: clean });
+  } catch (err) {
+    console.error("POST /entities/:list/:key/images/complete failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 app.delete("/entities/:list/:key", requireAdminSession, async (req, res) => {
   const { list, key } = req.params;
   try {
@@ -523,6 +588,8 @@ app.get("/", (_req, res) => {
       "GET  /entities/:list/:key/similar",
     "POST /entities/:list          (admin)",
     "PUT  /entities/:list/:key     (admin)",
+    "POST /entities/:list/:key/images/presign   (admin)",
+    "POST /entities/:list/:key/images/complete  (admin)",
     "DELETE /entities/:list/:key   (admin)",
     "POST /chat/hello",
     "POST /chat/senza",

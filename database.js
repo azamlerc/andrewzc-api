@@ -170,6 +170,30 @@ export async function updateEntity(list, key, patch) {
   return result?.value ?? result ?? null;
 }
 
+export async function appendEntityImages(list, key, filenames = []) {
+  const db = await connectToMongo();
+  const clean = Array.from(new Set(
+    filenames
+      .map(name => String(name || "").trim())
+      .filter(Boolean)
+  ));
+
+  if (clean.length === 0) {
+    return db.collection("entities").findOne({ list, key });
+  }
+
+  const now = new Date();
+  const result = await db.collection("entities").findOneAndUpdate(
+    { list, key },
+    {
+      $addToSet: { images: { $each: clean } },
+      $set: { updatedAt: now },
+    },
+    { returnDocument: "after" }
+  );
+  return result?.value ?? result ?? null;
+}
+
 export async function deleteEntity(list, key) {
   const db     = await connectToMongo();
   const result = await db.collection("entities").findOneAndDelete({ list, key });

@@ -22,6 +22,8 @@ npm run dev            # node --watch server.js
 | `MONGODB_DB`     | ✅        | Database name                                    |
 | `SESSION_PEPPER` | ✅        | HMAC secret for session token hashing            |
 | `OPENAI_API_KEY` | ✅        | Required for semantic search and `/search`       |
+| `AWS_REGION`     | —        | AWS region for presigned image uploads (default: `us-east-1`) |
+| `S3_BUCKET`      | —        | S3 bucket for entity image uploads               |
 | `PORT`           | —        | Port to listen on (default: 3000)                |
 
 ---
@@ -66,6 +68,7 @@ Key fields:
 | `reference`    | string   | Secondary identifier used in key generation for some lists    |
 | `notes`        | string[] | Personal notes in Andrew's voice                              |
 | `props`        | object   | Structured facts (Wikidata-style); schema varies by list      |
+| `images`       | string[] | Image filenames stored in S3 under `<list>/`                  |
 | `wikiSummary`  | string   | First paragraph of Wikipedia article (returned on single fetch)|
 
 #### The `props` object
@@ -182,6 +185,50 @@ Returns entities whose Wikipedia embeddings are most similar to the given entity
 
 - [/entities/metros/paris-metro/similar](https://api.andrewzc.net/entities/metros/paris-metro/similar)
 - [/entities/cities/amsterdam/similar](https://api.andrewzc.net/entities/cities/amsterdam/similar)
+
+#### Presign image uploads
+```
+POST /entities/:list/:key/images/presign
+```
+Admin-only. Allocates the next numbered image filenames for an entity and returns presigned S3 upload URLs for both the original image and its thumbnail.
+
+Request body:
+
+```json
+{ "count": 2 }
+```
+
+Response shape:
+
+```json
+{
+  "list": "hamburgers",
+  "key": "bareburger",
+  "uploads": [
+    {
+      "filename": "bareburger3.jpg",
+      "originalKey": "hamburgers/bareburger3.jpg",
+      "thumbKey": "hamburgers/tn/bareburger3.jpg",
+      "originalUploadUrl": "https://...",
+      "thumbUploadUrl": "https://..."
+    }
+  ]
+}
+```
+
+The backend allocates filenames from the entity's existing `images` array, so a burger with `["bareburger1.jpg", "bareburger2.jpg"]` will receive `bareburger3.jpg` next.
+
+#### Complete image uploads
+```
+POST /entities/:list/:key/images/complete
+```
+Admin-only. Call this after both the original image and the thumbnail have been uploaded successfully. Appends the filenames to the entity's `images` array.
+
+Request body:
+
+```json
+{ "filenames": ["bareburger3.jpg", "bareburger4.jpg"] }
+```
 
 ---
 
