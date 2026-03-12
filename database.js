@@ -52,6 +52,42 @@ export async function getPageSummaries() {
   });
 }
 
+// Hoist props relevant to a specific page context into top-level entity fields.
+// Called when serving a propertyOf page — the prop key matches the page key.
+//
+// Handles all four prop value shapes from the props workflow:
+//   true / false     → boolean membership, nothing to hoist
+//   number / string  → hoisted as `prefix` (scalar value)
+//   object           → hoist strike, badges, icons; value becomes prefix/reference
+//   array            → left as-is (e.g. metro-widths), no hoisting
+//
+// prefixProp    — if set (e.g. "year"), extract obj[prefixProp] as prefix instead of obj.value
+// referenceProp — if set (e.g. "country"), extract obj[referenceProp] as reference
+//
+// props are stripped from the returned entity (not for client consumption on page endpoints).
+function hoistPropForPage(entity, propKey, { prefixProp, referenceProp } = {}) {
+  const prop = entity?.props?.[propKey];
+  const { props: _props, ...rest } = entity;
+
+  // Boolean, null, or array (metro-widths style) — nothing to hoist beyond stripping props
+  if (prop == null || prop === true || prop === false || Array.isArray(prop)) {
+    return rest;
+  }
+
+  if (typeof prop === "object") {
+    if (prop.strike)       rest.strike = true;
+    if (prop.badges?.length) rest.badges = [...(entity.badges || []), ...prop.badges];
+    if (prop.icons?.length)  rest.icons  = [...(entity.icons  || []), ...prop.icons];
+    if (prefixProp    && prop[prefixProp]    != null) rest.prefix    = prop[prefixProp];
+    if (referenceProp && prop[referenceProp] != null) rest.reference = prop[referenceProp];
+  } else {
+    // scalar number or string — use directly as prefix
+    rest.prefix = prop;
+  }
+
+  return rest;
+}
+
 export async function getPageWithEntities(key) {
   const db       = await connectToMongo();
   const pages    = db.collection("pages");
@@ -61,11 +97,14 @@ export async function getPageWithEntities(key) {
   if (!page) return null;
 
   let docs;
+  const hoistOptions = { prefixProp: page.prefixProp, referenceProp: page.referenceProp };
+
   if (page.propertyOf) {
     docs = await entities
       .find({ list: page.propertyOf, [`props.${key}`]: { $exists: true } })
       .sort({ name: 1, key: 1 })
       .toArray();
+    docs = docs.map(entity => hoistPropForPage(entity, key, hoistOptions));
   } else {
     docs = await entities
       .find({ list: key })
