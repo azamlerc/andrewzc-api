@@ -75,9 +75,10 @@ function hoistPropForPage(entity, propKey, { prefixProp, referenceProp } = {}) {
   }
 
   if (typeof prop === "object") {
-    if (prop.strike)       rest.strike = true;
+    if (prop.strike)        rest.strike = true;
     if (prop.badges?.length) rest.badges = [...(entity.badges || []), ...prop.badges];
     if (prop.icons?.length)  rest.icons  = [...(entity.icons  || []), ...prop.icons];
+    if (prop.flags?.length)  rest.flags  = [...(entity.flags  || []), ...prop.flags];
     if (prefixProp    && prop[prefixProp]    != null) rest.prefix    = prop[prefixProp];
     if (referenceProp && prop[referenceProp] != null) rest.reference = prop[referenceProp];
   } else {
