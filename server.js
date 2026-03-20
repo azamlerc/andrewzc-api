@@ -7,7 +7,7 @@ import argon2 from "argon2";
 
 import {
   ensureIndexes,
-  getPage, getPages, getPageSummaries, getPageWithEntities,
+  getPage, getPages, getPageSummaries, getPageWithEntities, createPage, updatePage,
   getEntity, createEntity, updateEntity, appendEntityImages, deleteEntity,
   getEntitiesByCountry, getEntitiesByCity,
   getEntitiesNearPoint, getEntitiesNearEntity,
@@ -86,6 +86,7 @@ function stripKeepSummary(doc) {
 }
 
 function adminCookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
     secure:   process.env.NODE_ENV === "production",
@@ -210,6 +211,19 @@ app.get("/pages/summaries", async (_req, res) => {
 
 app.get("/pages/:id", async (req, res) => {
   try {
+    const page = await getPage(req.params.id);
+    if (!page) {
+      return res.status(404).json({ error: "page_not_found", message: `No page found for key='${req.params.id}'` });
+    }
+    return res.json(strip(page));
+  } catch (err) {
+    console.error("GET /pages/:id failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+app.get("/pages/:id/entities", async (req, res) => {
+  try {
     const result = await getPageWithEntities(req.params.id);
     if (!result) {
       return res.status(404).json({ error: "page_not_found", message: `No page found for key='${req.params.id}'` });
@@ -220,6 +234,40 @@ app.get("/pages/:id", async (req, res) => {
     });
   } catch (err) {
     console.error("GET /pages/:id failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+app.post("/pages", requireAdminSession, async (req, res) => {
+  const payload = { ...(req.body || {}) };
+  delete payload._id;
+  delete payload.key;
+
+  try {
+    const result = await createPage(payload);
+    if (result.error === "missing_name") return res.status(400).json({ error: "bad_request", message: "Missing name" });
+    if (result.error === "bad_key")      return res.status(400).json({ error: "bad_request", message: "Could not derive key" });
+    return res.status(201).json(strip(result.doc));
+  } catch (err) {
+    if (err?.code === 11000 || String(err).includes("E11000")) {
+      return res.status(409).json({ error: "conflict", message: "Page already exists" });
+    }
+    console.error("POST /pages failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+app.put("/pages/:id", requireAdminSession, async (req, res) => {
+  const patch = { ...(req.body || {}) };
+  delete patch._id;
+  delete patch.key;
+
+  try {
+    const doc = await updatePage(req.params.id, patch);
+    if (!doc) return res.status(404).json({ error: "page_not_found", message: `No page found for key='${req.params.id}'` });
+    return res.json(strip(doc));
+  } catch (err) {
+    console.error("PUT /pages/:id failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
@@ -575,6 +623,9 @@ app.get("/", (_req, res) => {
     "GET  /pages",
     "GET  /pages/summaries",
     "GET  /pages/:id",
+    "GET  /pages/:id/entities",
+    "POST /pages                 (admin)",
+    "PUT  /pages/:id             (admin)",
     "GET  /countries/:code",
     "GET  /cities/:key",
     "POST /admin/login",
@@ -584,8 +635,8 @@ app.get("/", (_req, res) => {
     "GET  /entities/nearby?lat=&lon=&radius=&list=&limit=",
     "GET  /entities/:list/props?filter=<json>&sortBy=&sortDir=&limit=",
     "GET  /entities/:list/:key",
-      "GET  /entities/:list/:key/nearby?radius=&limit=",
-      "GET  /entities/:list/:key/similar",
+    "GET  /entities/:list/:key/nearby?radius=&limit=",
+    "GET  /entities/:list/:key/similar",
     "POST /entities/:list          (admin)",
     "PUT  /entities/:list/:key     (admin)",
     "POST /entities/:list/:key/images/presign   (admin)",

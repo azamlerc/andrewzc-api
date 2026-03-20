@@ -118,15 +118,33 @@ GET /pages
 ```
 Returns all 342 pages with full metadata.
 
+#### Create a page
+```
+POST /pages
+```
+Admin-only. Creates a page document, deriving `key` from `name` via `simplify(name)`.
+
 #### Page summaries (lightweight)
 ```
 GET /pages/summaries
 ```
 Returns `{ key, name, description }` for each page — used to build context for the natural language search router. Much smaller payload than `/pages`.
 
-#### Page with its entities
+#### Fetch a page
 ```
 GET /pages/:key
+```
+Returns the page document from the `pages` collection.
+
+#### Update a page
+```
+PUT /pages/:key
+```
+Admin-only. Accepts a sparse document and merges it into the stored page with a shallow `$set`.
+
+#### Page with its entities
+```
+GET /pages/:key/entities
 ```
 Returns the page metadata and all entities belonging to it.
 
@@ -135,6 +153,7 @@ Returns the page metadata and all entities belonging to it.
 - [/pages/cathedrals](https://api.andrewzc.net/pages/cathedrals)
 - [/pages/countries](https://api.andrewzc.net/pages/countries)
 - [/pages/heritage](https://api.andrewzc.net/pages/heritage)
+- [/pages/metros/entities](https://api.andrewzc.net/pages/metros/entities)
 
 ---
 

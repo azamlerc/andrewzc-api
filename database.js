@@ -3,7 +3,7 @@
 
 import { MongoClient } from "mongodb";
 import OpenAI from "openai";
-import { makeKeyFromPageTags } from "./utils.js";
+import { makeKeyFromPageTags, simplify } from "./utils.js";
 
 let client;
 let db;
@@ -21,6 +21,7 @@ export async function ensureIndexes() {
   await db.collection("accounts").createIndex({ username: 1 }, { unique: true });
   await db.collection("sessions").createIndex({ sessionTokenHash: 1 }, { unique: true });
   await db.collection("sessions").createIndex({ accountId: 1 });
+  await db.collection("pages").createIndex({ key: 1 }, { unique: true });
   await db.collection("entities").createIndex({ list: 1, key: 1 }, { unique: true });
 }
 
@@ -34,6 +35,31 @@ export async function getPage(key) {
 export async function getPages() {
   const db = await connectToMongo();
   return db.collection("pages").find({}).sort({ name: 1, key: 1 }).toArray();
+}
+
+export async function createPage(payload) {
+  const db   = await connectToMongo();
+  const name = String(payload.name || "").trim();
+  if (!name) return { error: "missing_name" };
+
+  const key = simplify(name);
+  if (!key) return { error: "bad_key" };
+
+  const now = new Date();
+  const doc = { ...payload, key, createdAt: payload.createdAt ?? now, updatedAt: now };
+  await db.collection("pages").insertOne(doc);
+  return { doc };
+}
+
+export async function updatePage(key, patch) {
+  const db  = await connectToMongo();
+  const now = new Date();
+  const result = await db.collection("pages").findOneAndUpdate(
+    { key },
+    { $set: { ...patch, updatedAt: now } },
+    { returnDocument: "after" }
+  );
+  return result?.value ?? result ?? null;
 }
 
 // Returns a compact list of pages for use as AI context.
