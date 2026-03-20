@@ -8,7 +8,7 @@ import argon2 from "argon2";
 import {
   ensureIndexes,
   getPage, getPages, getPageSummaries, getPageWithEntities, createPage, updatePage,
-  getEntity, createEntity, updateEntity, appendEntityImages, deleteEntity,
+  getEntity, createEntity, updateEntity, enrichEntity, appendEntityImages, deleteEntity,
   getEntitiesByCountry, getEntitiesByCity,
   getEntitiesNearPoint, getEntitiesNearEntity,
   searchByName, queryByProps,
@@ -28,6 +28,7 @@ import { getCoordsFromUrl } from "./wiki.js";
 import { chat, preload } from "./agent.js";
 import { helloBot } from "./agent-hello.js";
 import { senzaBot } from "./agent-senza.js";
+import { railfanBot } from "./agent-railfan.js";
 
 dotenv.config();
 
@@ -398,6 +399,18 @@ app.put("/entities/:list/:key", requireAdminSession, async (req, res) => {
   }
 });
 
+app.post("/entities/:list/:key/enrich", requireAdminSession, async (req, res) => {
+  const { list, key } = req.params;
+  try {
+    const result = await enrichEntity(list, key);
+    if (result.error === "not_found") return res.status(404).json({ error: "not_found", message: "Entity not found" });
+    return res.json({ enriched: result.enriched, doc: strip(result.doc) });
+  } catch (err) {
+    console.error("POST /entities/:list/:key/enrich failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 app.post("/entities/:list/:key/images/presign", requireAdminSession, async (req, res) => {
   if (!requireS3Config(res)) return;
 
@@ -546,6 +559,7 @@ function makeChatHandler(bot) {
 
 app.post("/chat/hello",     makeChatHandler(helloBot));
 app.post("/chat/senza",     makeChatHandler(senzaBot));
+app.post("/chat/railfan",   requireAdminSession, makeChatHandler(railfanBot));
 // app.post("/chat/interview", makeChatHandler(interviewBot)); // coming soon
 
 // ---- Natural language search ----
@@ -637,8 +651,9 @@ app.get("/", (_req, res) => {
     "GET  /entities/:list/:key",
     "GET  /entities/:list/:key/nearby?radius=&limit=",
     "GET  /entities/:list/:key/similar",
-    "POST /entities/:list          (admin)",
-    "PUT  /entities/:list/:key     (admin)",
+    "POST /entities/:list                (admin)",
+    "PUT  /entities/:list/:key           (admin)",
+    "POST /entities/:list/:key/enrich    (admin)",
     "POST /entities/:list/:key/images/presign   (admin)",
     "POST /entities/:list/:key/images/complete  (admin)",
     "DELETE /entities/:list/:key   (admin)",
@@ -658,6 +673,7 @@ app.get("/", (_req, res) => {
     await Promise.all([
       preload(helloBot),
       preload(senzaBot),
+      preload(railfanBot),
     ]);
     app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   } catch (err) {

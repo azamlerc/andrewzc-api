@@ -220,6 +220,105 @@ export async function appendEntityImages(list, key, filenames = []) {
   return result?.value ?? result ?? null;
 }
 
+// ---- Enrich ----
+
+async function searchWikipediaLink(name) {
+  const url = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(name)}&format=json&origin=*`;
+  const res = await fetch(url);
+  if (res.status === 429) throw Object.assign(new Error("Rate limited"), { rateLimited: true });
+  if (!res.ok) return null;
+  const json = await res.json();
+  const title = json?.query?.search?.[0]?.title;
+  if (!title) return null;
+  return `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
+}
+
+async function findNearestCity(location, db, radiusKm = 30) {
+  const geoPoint = { type: "Point", coordinates: [location.coordinates[0], location.coordinates[1]] };
+  const results = await db.collection("entities")
+    .find(
+      { list: "cities", location: { $nearSphere: { $geometry: geoPoint, $maxDistance: radiusKm * 1000 } } },
+      { projection: { name: 1, _id: 0 } }
+    )
+    .limit(1)
+    .toArray();
+  return results[0]?.name ?? null;
+}
+
+export async function enrichEntity(list, key) {
+  const database = await connectToMongo();
+  const pages    = database.collection("pages");
+  const entities = database.collection("entities");
+
+  const [page, entity] = await Promise.all([
+    pages.findOne({ key: list }, { projection: { tags: 1 } }),
+    entities.findOne({ list, key }),
+  ]);
+
+  if (!entity) return { error: "not_found" };
+
+  const tags           = page?.tags ?? [];
+  const skipCoords     = tags.includes("no-coords") || tags.includes("people");
+  const needsReference = tags.includes("reference") || tags.includes("reference-optional");
+
+  const update = {};
+  let wikiBlocked = false;
+
+  // 1. Link — search Wikipedia by name if missing
+  if (!entity.link) {
+    try {
+      const found = await searchWikipediaLink(entity.name);
+      if (found) update.link = found;
+    } catch (err) {
+      if (err.rateLimited) wikiBlocked = true;
+      else throw err;
+    }
+  }
+
+  const link = update.link ?? entity.link;
+
+  // 2. Coords — extract from Wikipedia page
+  if (!wikiBlocked && !skipCoords && !entity.coords && link && /wikipedia\.org/.test(link)) {
+    try {
+      const { getCoordsFromUrl } = await import("./wiki.js");
+      const result = await getCoordsFromUrl(link, { list });
+      if (result) {
+        update.coords   = result.coords;
+        update.location = result.location;
+      }
+    } catch (err) {
+      if (err.rateLimited) wikiBlocked = true;
+      else throw err;
+    }
+  }
+
+  // 3. City — nearest city from coords
+  const location = update.location ?? entity.location;
+  if (!skipCoords && location && !entity.city) {
+    const city = await findNearestCity(location, database);
+    if (city) update.city = city;
+  }
+
+  // 4. Reference — copy from city if page needs it
+  const city = update.city ?? entity.city;
+  if (needsReference && !entity.reference && city) {
+    update.reference = city;
+  }
+
+  if (Object.keys(update).length === 0) {
+    return { doc: entity, enriched: [] };
+  }
+
+  update.updatedAt = new Date();
+  const result = await entities.findOneAndUpdate(
+    { list, key },
+    { $set: update },
+    { returnDocument: "after" }
+  );
+  const doc = result?.value ?? result;
+  return { doc, enriched: Object.keys(update).filter(k => k !== "updatedAt") };
+}
+
 export async function deleteEntity(list, key) {
   const db     = await connectToMongo();
   const result = await db.collection("entities").findOneAndDelete({ list, key });
