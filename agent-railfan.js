@@ -199,6 +199,8 @@ export const railfanBot = {
   name:             "railfan",
   contextUrl:       CONTEXT_RAW,
   imageCdnHost:     null,
+  model:            "claude-haiku-4-5-20251001",
+  maxTokens:        256,  // replies are always 1 line
   loadSystemPrompt,
   buildTools,
   executeTool,

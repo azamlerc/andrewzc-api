@@ -3,8 +3,9 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
-const MODEL      = "claude-sonnet-4-6";
-const MAX_TOKENS = 1024;
+const MODEL           = "claude-sonnet-4-6";
+const MAX_TOKENS      = 1024;
+const MAX_TOKENS_TERSE = 256; // for bots that reply in 1-2 sentences
 const TTL_MS     = 5 * 60 * 1000; // 5 minutes
 
 // ---- Context cache (per bot, keyed by contextUrl) ----
@@ -61,8 +62,8 @@ export async function chat(bot, history, userMessage) {
 
   while (true) {
     const response = await client.messages.create({
-      model:      MODEL,
-      max_tokens: MAX_TOKENS,
+      model:      bot.model     ?? MODEL,
+      max_tokens: bot.maxTokens ?? MAX_TOKENS,
       system:     systemPrompt,
       tools,
       messages,
