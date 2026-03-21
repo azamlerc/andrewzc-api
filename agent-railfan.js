@@ -5,7 +5,6 @@
 import {
   searchByName,
   getEntity,
-  getPage,
   updateEntity,
   createEntity,
   enrichEntity,
