@@ -294,6 +294,14 @@ The city key is the display name lowercased and hyphenated. US/Canadian cities m
 - [/cities/new-york-ny](https://api.andrewzc.net/cities/new-york-ny)
 - [/cities/den-haag](https://api.andrewzc.net/cities/den-haag)
 
+#### All entities associated with a trip
+```
+GET /trips/:key
+```
+Returns the page document for that trip key from `pages`, plus all entities whose `trips` array contains the same key.
+
+- [/trips/europe-2022](https://api.andrewzc.net/trips/europe-2022)
+
 ---
 
 ### Natural Language Search

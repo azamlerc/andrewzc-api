@@ -9,7 +9,7 @@ import {
   ensureIndexes,
   getPage, getPages, getPageSummaries, getPageWithEntities, createPage, updatePage,
   getEntity, createEntity, updateEntity, enrichEntity, appendEntityImages, deleteEntity,
-  getEntitiesByCountry, getEntitiesByCity,
+  getEntitiesByCountry, getEntitiesByCity, getEntitiesByTrip,
   getEntitiesNearPoint, getEntitiesNearEntity,
   searchByName, queryByProps,
   searchByVector, getSimilarEntities, embedText,
@@ -539,6 +539,19 @@ app.get("/cities/:key", async (req, res) => {
   }
 });
 
+app.get("/trips/:key", async (req, res) => {
+  const key = String(req.params.key || "").trim();
+  if (!key) return res.status(400).json({ error: "bad_request", message: "Missing trip key" });
+
+  try {
+    const result = await getEntitiesByTrip(key);
+    return res.json({ page: strip(result.page), entities: result.entities.map(strip) });
+  } catch (err) {
+    console.error("GET /trips/:key failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 // ---- Chat ----
 
 function makeChatHandler(bot) {
@@ -642,6 +655,7 @@ app.get("/", (_req, res) => {
     "PUT  /pages/:id             (admin)",
     "GET  /countries/:code",
     "GET  /cities/:key",
+    "GET  /trips/:key",
     "POST /admin/login",
     "POST /admin/logout",
     "GET  /admin/me",

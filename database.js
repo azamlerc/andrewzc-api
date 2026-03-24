@@ -377,6 +377,19 @@ export async function getEntitiesByCity(city) {
   return { city: cityDoc, entities };
 }
 
+export async function getEntitiesByTrip(key) {
+  const db = await connectToMongo();
+  const [page, entities] = await Promise.all([
+    db.collection("pages").findOne({ key }),
+    db.collection("entities")
+      .find({ trips: key })
+      .sort({ name: 1, key: 1 })
+      .toArray(),
+  ]);
+
+  return { page, entities };
+}
+
 // ---- Geo search ----
 
 const GEO_PROJECTION = {
