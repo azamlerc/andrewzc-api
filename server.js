@@ -9,7 +9,7 @@ import {
   ensureIndexes,
   getPage, getPages, getPageSummaries, getPageWithEntities, createPage, updatePage,
   getEntity, createEntity, updateEntity, enrichEntity, appendEntityImages, deleteEntity,
-  getEntitiesByCountry, getEntitiesByCity, getEntitiesByTrip,
+  getEntitiesByCountry, getEntitiesByCity, getEntitiesByTrip, getEntitiesByArtist,
   getEntitiesNearPoint, getEntitiesNearEntity,
   searchByName, queryByProps,
   searchByVector, getSimilarEntities, embedText,
@@ -552,6 +552,19 @@ app.get("/trips/:key", async (req, res) => {
   }
 });
 
+app.get("/artists/:key", async (req, res) => {
+  const key = String(req.params.key || "").trim();
+  if (!key) return res.status(400).json({ error: "bad_request", message: "Missing artist key" });
+
+  try {
+    const result = await getEntitiesByArtist(key);
+    return res.json({ artist: strip(result.artist), entities: result.entities.map(strip) });
+  } catch (err) {
+    console.error("GET /artists/:key failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 // ---- Chat ----
 
 function makeChatHandler(bot) {
@@ -656,6 +669,7 @@ app.get("/", (_req, res) => {
     "GET  /countries/:code",
     "GET  /cities/:key",
     "GET  /trips/:key",
+    "GET  /artists/:key",
     "POST /admin/login",
     "POST /admin/logout",
     "GET  /admin/me",

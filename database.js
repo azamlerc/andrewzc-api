@@ -390,6 +390,20 @@ export async function getEntitiesByTrip(key) {
   return { page, entities };
 }
 
+export async function getEntitiesByArtist(key) {
+  const db = await connectToMongo();
+  const artist = await db.collection("entities").findOne({ list: "artists", key });
+  if (!artist?.name) return { artist: artist || null, entities: [] };
+
+  const docs = await db.collection("entities")
+    .find({ $or: [{ name: artist.name }, { reference: artist.name }] })
+    .sort({ name: 1, key: 1 })
+    .toArray();
+
+  const entities = docs.filter((doc) => !(doc.list === "artists" && doc.key === key));
+  return { artist, entities };
+}
+
 // ---- Geo search ----
 
 const GEO_PROJECTION = {

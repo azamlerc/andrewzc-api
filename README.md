@@ -302,6 +302,14 @@ Returns the page document for that trip key from `pages`, plus all entities whos
 
 - [/trips/europe-2022](https://api.andrewzc.net/trips/europe-2022)
 
+#### All entities associated with an artist
+```
+GET /artists/:key
+```
+Looks up the artist entity in the `artists` list, then returns that artist plus all entities whose `name` or `reference` exactly matches the artist's name.
+
+- [/artists/pink-floyd](https://api.andrewzc.net/artists/pink-floyd)
+
 ---
 
 ### Natural Language Search
