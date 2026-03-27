@@ -9,6 +9,7 @@ import {
   ensureIndexes,
   getPage, getPages, getPageSummaries, getPageWithEntities, createPage, updatePage,
   getEntity, createEntity, updateEntity, enrichEntity, appendEntityImages, deleteEntity,
+  getBingoEntities,
   getEntitiesByCountry, getEntitiesByCity, getEntitiesByTrip, getEntitiesByArtist,
   getEntitiesNearPoint, getEntitiesNearEntity,
   searchByName, queryByProps,
@@ -360,6 +361,57 @@ app.get("/entities/:list/:key", async (req, res) => {
   }
 });
 
+app.post("/entities/bingo", async (req, res) => {
+  const pageKeys = Array.isArray(req.body?.pages)
+    ? Array.from(new Set(req.body.pages.map((key) => String(key || "").trim()).filter(Boolean)))
+    : [];
+  const countryCodes = Array.isArray(req.body?.countries)
+    ? Array.from(new Set(req.body.countries.map((code) => String(code || "").trim().toUpperCase()).filter(Boolean)))
+    : [];
+  const stateCodes = Array.isArray(req.body?.states)
+    ? Array.from(new Set(req.body.states.map((code) => String(code || "").trim().toUpperCase()).filter(Boolean)))
+    : [];
+
+  if (pageKeys.length === 0) {
+    return res.status(400).json({ error: "bad_request", message: "Missing non-empty pages array" });
+  }
+
+  const hasCountries = countryCodes.length > 0;
+  const hasStates    = stateCodes.length > 0;
+  if (hasCountries === hasStates) {
+    return res.status(400).json({ error: "bad_request", message: "Provide exactly one of countries or states" });
+  }
+
+  const scopeCodes = hasCountries ? countryCodes : stateCodes;
+  if (scopeCodes.some((code) => !/^[A-Z]{2}$/.test(code))) {
+    return res.status(400).json({ error: "bad_request", message: "Country/state codes must be two letters" });
+  }
+
+  try {
+    const result = await getBingoEntities({
+      pageKeys,
+      ...(hasCountries ? { countries: countryCodes } : { states: stateCodes }),
+    });
+
+    if (result.error === "pages_not_found") {
+      return res.status(404).json({
+        error: "page_not_found",
+        message: `Unknown page keys: ${result.missingPages.join(", ")}`,
+        missingPages: result.missingPages,
+      });
+    }
+
+    return res.json({
+      scope: hasCountries ? "countries" : "states",
+      pages: result.pages.map(strip),
+      entities: result.entities.map(strip),
+    });
+  } catch (err) {
+    console.error("POST /entities/bingo failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 app.post("/entities/:list", requireAdminSession, async (req, res) => {
   const { list } = req.params;
   const payload  = { ...(req.body || {}) };
@@ -674,6 +726,7 @@ app.get("/", (_req, res) => {
     "POST /admin/logout",
     "GET  /admin/me",
     "GET  /entities?search=<query>",
+    "POST /entities/bingo",
     "GET  /entities/nearby?lat=&lon=&radius=&list=&limit=",
     "GET  /entities/:list/props?filter=<json>&sortBy=&sortDir=&limit=",
     "GET  /entities/:list/:key",

@@ -187,6 +187,56 @@ Returns the full entity including `wikiSummary` (stripped from list results to k
 - [/entities/confluence/48n-2e](https://api.andrewzc.net/entities/confluence/48n-2e)
 - [/entities/countries/france-FR](https://api.andrewzc.net/entities/countries/france-FR)
 
+#### Batch bingo queries
+```
+POST /entities/bingo
+```
+Returns entities for a requested set of page keys and either country codes or state codes. This is intended for bingo-style summary pages that need several lists across several places in one call.
+
+Request body:
+
+```json
+{
+  "pages": ["capitals", "highest", "lowest", "unesco"],
+  "countries": ["AT", "BE", "CZ", "FR"]
+}
+```
+
+Or, for US-style state bingo:
+
+```json
+{
+  "pages": ["state-capitals", "highest", "lowest", "confluence"],
+  "states": ["CT", "MA", "NY", "PA"]
+}
+```
+
+Rules:
+
+- `pages` is required and must be a non-empty array of page keys
+- provide exactly one of `countries` or `states`
+- country/state codes must be two-letter codes
+
+Response shape:
+
+```json
+{
+  "scope": "countries",
+  "pages": [{ "key": "capitals", "name": "Capitals", "icon": "🏛" }],
+  "entities": [
+    {
+      "list": "capitals",
+      "key": "vienna",
+      "name": "Vienna",
+      "country": "AT",
+      "matchedPlaces": ["AT"]
+    }
+  ]
+}
+```
+
+For property-derived pages such as `highest` or `lowest`, entities are returned under the requested page key in `list`, with the relevant prop hoisted into the normal top-level fields.
+
 #### Query by props
 ```
 GET /entities/:list/props?filter=<json>[&sortBy=<field>][&sortDir=asc|desc][&limit=<n>]

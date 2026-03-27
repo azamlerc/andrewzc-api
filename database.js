@@ -23,6 +23,10 @@ export async function ensureIndexes() {
   await db.collection("sessions").createIndex({ accountId: 1 });
   await db.collection("pages").createIndex({ key: 1 }, { unique: true });
   await db.collection("entities").createIndex({ list: 1, key: 1 }, { unique: true });
+  await db.collection("entities").createIndex({ list: 1, country: 1 });
+  await db.collection("entities").createIndex({ list: 1, countries: 1 });
+  await db.collection("entities").createIndex({ list: 1, state: 1 });
+  await db.collection("entities").createIndex({ list: 1, states: 1 });
 }
 
 // ---- Pages ----
@@ -140,6 +144,119 @@ export async function getPageWithEntities(key) {
   }
 
   return { page, entities: docs };
+}
+
+function collectMatchedPlaces(entity, scope, codes) {
+  const matched = new Set();
+
+  if (scope === "countries") {
+    const single = entity?.country ? String(entity.country).toUpperCase() : null;
+    if (single && codes.has(single)) matched.add(single);
+
+    if (Array.isArray(entity?.countries)) {
+      for (const code of entity.countries) {
+        const upper = String(code || "").toUpperCase();
+        if (codes.has(upper)) matched.add(upper);
+      }
+    }
+  } else if (scope === "states") {
+    const single = entity?.state ? String(entity.state).toUpperCase() : null;
+    if (single && codes.has(single)) matched.add(single);
+
+    if (Array.isArray(entity?.states)) {
+      for (const code of entity.states) {
+        const upper = String(code || "").toUpperCase();
+        if (codes.has(upper)) matched.add(upper);
+      }
+    }
+  }
+
+  return [...matched];
+}
+
+export async function getBingoEntities({ pageKeys = [], countries = null, states = null } = {}) {
+  const db             = await connectToMongo();
+  const pagesCol       = db.collection("pages");
+  const entitiesCol    = db.collection("entities");
+  const normalizedKeys = Array.from(new Set(
+    (pageKeys || [])
+      .map((key) => String(key || "").trim())
+      .filter(Boolean)
+  ));
+
+  const placeCodes = Array.isArray(countries) && countries.length > 0
+    ? countries
+    : Array.isArray(states) ? states : [];
+  const scope = Array.isArray(countries) && countries.length > 0 ? "countries" : "states";
+  const codes = new Set(
+    placeCodes
+      .map((code) => String(code || "").trim().toUpperCase())
+      .filter(Boolean)
+  );
+
+  const pageDocs = await pagesCol.find({ key: { $in: normalizedKeys } }).toArray();
+  const pagesByKey = new Map(pageDocs.map((page) => [page.key, page]));
+  const orderedPages = normalizedKeys.map((key) => pagesByKey.get(key)).filter(Boolean);
+
+  if (orderedPages.length !== normalizedKeys.length) {
+    const missingPages = normalizedKeys.filter((key) => !pagesByKey.has(key));
+    return { error: "pages_not_found", missingPages };
+  }
+
+  const scopeMatch = scope === "countries"
+    ? { $or: [{ country: { $in: [...codes] } }, { countries: { $in: [...codes] } }] }
+    : { $or: [{ state: { $in: [...codes] } }, { states: { $in: [...codes] } }] };
+
+  const directPages = orderedPages.filter((page) => !page.propertyOf);
+  const propPages   = orderedPages.filter((page) => page.propertyOf);
+  const results     = [];
+
+  if (directPages.length > 0) {
+    const directKeys = directPages.map((page) => page.key);
+    const directDocs = await entitiesCol
+      .find({ list: { $in: directKeys }, ...scopeMatch })
+      .sort({ list: 1, name: 1, key: 1 })
+      .toArray();
+
+    const docsByList = new Map();
+    for (const doc of directDocs) {
+      if (!docsByList.has(doc.list)) docsByList.set(doc.list, []);
+      docsByList.get(doc.list).push(doc);
+    }
+
+    for (const page of directPages) {
+      const docs = docsByList.get(page.key) || [];
+      for (const doc of docs) {
+        results.push({
+          ...doc,
+          matchedPlaces: collectMatchedPlaces(doc, scope, codes),
+        });
+      }
+    }
+  }
+
+  for (const page of propPages) {
+    const docs = await entitiesCol
+      .find({
+        list: page.propertyOf,
+        [`props.${page.key}`]: { $exists: true },
+        ...scopeMatch,
+      })
+      .sort({ name: 1, key: 1 })
+      .toArray();
+
+    const hoistOptions = { prefixProp: page.prefixProp, referenceProp: page.referenceProp };
+    for (const doc of docs) {
+      results.push({
+        ...hoistPropForPage(doc, page.key, hoistOptions),
+        list: page.key,
+        sourceList: doc.list,
+        matchedPlaces: collectMatchedPlaces(doc, scope, codes),
+      });
+    }
+  }
+
+  return { pages: orderedPages, entities: results };
 }
 
 // ---- Entities ----
