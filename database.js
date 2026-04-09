@@ -697,6 +697,158 @@ export async function embedText(text) {
   return data[0].embedding;
 }
 
+// ---- Flags ----
+
+function compressArray(arr) {
+  const compressed = [];
+  let zeros = 0;
+  for (const v of arr) {
+    if (v === 0) {
+      zeros++;
+    } else {
+      if (zeros > 0) { compressed.push(0, zeros); zeros = 0; }
+      compressed.push(v);
+    }
+  }
+  if (zeros > 0) compressed.push(0, zeros);
+  return compressed;
+}
+
+export async function getFlagsData() {
+  const t0       = Date.now();
+  const db       = await connectToMongo();
+  const entities = db.collection("entities");
+  const pages    = db.collection("pages");
+
+  // Fire all queries in parallel
+  const [countryEntities, pagesDocs, pageStatsRaw, cellsRaw] = await Promise.all([
+
+    // Country entities: key, name, flag icon, 2-letter code
+    entities
+      .find({ list: "countries" }, { projection: { key: 1, name: 1, icons: 1, country: 1 } })
+      .toArray(),
+
+    // All page metadata, excluding roadtrip pages (they tag entities from other
+    // pages and have no entities of their own)
+    pages
+      .find({ tags: { $ne: "roadtrip" } }, { projection: { key: 1, name: 1, icon: 1, group: 1 } })
+      .toArray(),
+
+    // Per-page stats: total count + been count
+    entities.aggregate([
+      { $match: { list: { $exists: true } } },
+      { $group: {
+        _id:   "$list",
+        total: { $sum: 1 },
+        been:  { $sum: { $cond: [{ $eq: ["$been", true] }, 1, 0] } },
+      }},
+    ]).toArray(),
+
+    // Per-(page, country) cell counts + been counts in a single pass
+    entities.aggregate([
+      { $match: { list: { $exists: true } } },
+      { $project: {
+        list: 1,
+        been: 1,
+        codes: { $ifNull: ["$countries", ["$country"]] },
+      }},
+      { $match: { codes: { $ne: null }, "codes.0": { $exists: true } } },
+      { $unwind: "$codes" },
+      { $match: { codes: { $ne: null, $ne: "" } } },
+      { $group: {
+        _id:   { list: "$list", code: "$codes" },
+        count: { $sum: 1 },
+        been:  { $sum: { $cond: [{ $eq: ["$been", true] }, 1, 0] } },
+      }},
+    ]).toArray(),
+  ]);
+
+  // Build lookup maps
+  const codeToCountry = new Map();
+  for (const c of countryEntities) {
+    if (c.country) codeToCountry.set(c.country, c);
+  }
+
+  const pageStats = new Map(pageStatsRaw.map(r => [r._id, r]));
+
+  const cellMap = new Map();
+  for (const r of cellsRaw) {
+    const { list, code } = r._id;
+    if (!cellMap.has(list)) cellMap.set(list, new Map());
+    cellMap.get(list).set(code, { count: r.count, been: r.been });
+  }
+
+  // Compute per-country totals across all pages
+  const countryTotals = new Map();
+  const countryBeen   = new Map();
+  for (const [, codeCounts] of cellMap) {
+    for (const [code, { count, been }] of codeCounts) {
+      const entity = codeToCountry.get(code);
+      if (!entity) continue;
+      countryTotals.set(entity.key, (countryTotals.get(entity.key) || 0) + count);
+      countryBeen.set(entity.key,   (countryBeen.get(entity.key)   || 0) + been);
+    }
+  }
+
+  // Sorted countries: descending total count
+  const sortedCountries = countryEntities
+    .filter(c => c.country && codeToCountry.has(c.country))
+    .sort((a, b) => (countryTotals.get(b.key) || 0) - (countryTotals.get(a.key) || 0));
+
+  const countryIndex = new Map(sortedCountries.map((c, i) => [c.country, i]));
+  const numCountries = sortedCountries.length;
+
+  // Sorted pages: descending entity count
+  const sortedPages = pagesDocs
+    .map(p => {
+      const stats = pageStats.get(p.key) || { total: 0, been: 0 };
+      return {
+        key:   p.key,
+        name:  p.name,
+        icon:  p.icon || "",
+        group: p.group,
+        count: stats.total,
+        been:  stats.total > 0 ? +(stats.been / stats.total).toFixed(3) : 0,
+      };
+    })
+    .sort((a, b) => b.count - a.count);
+
+  // Compressed data matrix
+  const data = {};
+  for (const page of sortedPages) {
+    const codeCounts = cellMap.get(page.key) || new Map();
+    const row = new Array(numCountries).fill(0);
+    for (const [code, { count }] of codeCounts) {
+      const idx = countryIndex.get(code);
+      if (idx !== undefined) row[idx] = count;
+    }
+    data[page.key] = compressArray(row).join(",");
+  }
+
+  // Grand total
+  let totalCount = 0;
+  for (const [, stats] of pageStats) totalCount += stats.total;
+
+  return {
+    queryTimeMs: Date.now() - t0,
+    countries: sortedCountries.map(c => {
+      const total = countryTotals.get(c.key) || 0;
+      const been  = countryBeen.get(c.key)   || 0;
+      return {
+        been:    total > 0 ? +(been / total).toFixed(3) : 0,
+        count:   total,
+        country: c.country,
+        icon:    c.icons?.[0] || "",
+        key:     c.key,
+        name:    c.name,
+      };
+    }),
+    data,
+    pages: sortedPages.map(({ group, ...p }) => group ? { ...p, group } : p),
+    totalCount,
+  };
+}
+
 // ---- Auth ----
 
 export async function findAccount(username) {

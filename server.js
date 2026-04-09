@@ -10,6 +10,7 @@ import {
   getPage, getPages, getPageSummaries, getPageWithEntities, createPage, updatePage,
   getEntity, createEntity, updateEntity, enrichEntity, appendEntityImages, deleteEntity,
   getBingoEntities,
+  getFlagsData,
   getEntitiesByCountry, getEntitiesByCity, getEntitiesByTrip, getEntitiesByArtist,
   getEntitiesNearPoint, getEntitiesNearEntity,
   searchByName, queryByProps,
@@ -565,6 +566,18 @@ app.get("/entities/:list/:key/nearby", async (req, res) => {
   }
 });
 
+// ---- Flags ----
+
+app.get("/flags", async (_req, res) => {
+  try {
+    const data = await getFlagsData();
+    return res.json(data);
+  } catch (err) {
+    console.error("GET /flags failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
 // ---- Countries / cities ----
 
 app.get("/countries/:code", async (req, res) => {
@@ -731,6 +744,7 @@ app.get("/", (_req, res) => {
     "GET  /entities/:list/props?filter=<json>&sortBy=&sortDir=&limit=",
     "GET  /entities/:list/:key",
     "GET  /entities/:list/:key/nearby?radius=&limit=",
+    "GET  /flags",
     "GET  /entities/:list/:key/similar",
     "POST /entities/:list                (admin)",
     "PUT  /entities/:list/:key           (admin)",
