@@ -534,7 +534,7 @@ app.get("/entities/nearby", async (req, res) => {
   const lon      = parseFloat(req.query.lon);
   const radiusKm = parseFloat(req.query.radius) || 50;
   const listFilter = req.query.list ? String(req.query.list) : null;
-  const limit    = Math.min(parseInt(req.query.limit) || 50, 50);
+  const limit    = Math.min(parseInt(req.query.limit) || 50, 100);
 
   if (isNaN(lat) || isNaN(lon)) {
     return res.status(400).json({ error: "bad_request", message: "Missing or invalid ?lat= and ?lon=" });
