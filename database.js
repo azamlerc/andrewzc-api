@@ -27,6 +27,16 @@ export async function ensureIndexes() {
   await db.collection("entities").createIndex({ list: 1, countries: 1 });
   await db.collection("entities").createIndex({ list: 1, state: 1 });
   await db.collection("entities").createIndex({ list: 1, states: 1 });
+
+	// Agent collections
+	await db.collection("agent_runs").createIndex({ agent: 1, ts: -1 });
+	await db.collection("agent_runs").createIndex({ entityKey: 1, agent: 1 });
+	await db.collection("proposed").createIndex({ status: 1, proposedAt: -1 });
+	await db.collection("proposed").createIndex({ list: 1, status: 1 });
+	await db.collection("agent_context").createIndex({ agent: 1, topic: 1 }, { unique: true });
+	await db.collection("data_source_cache").createIndex({ source: 1, cacheKey: 1 }, { unique: true });
+	await db.collection("feedback").createIndex({ entityKey: 1 });
+	await db.collection("feedback").createIndex({ list: 1, decidedAt: -1 });
 }
 
 // ---- Pages ----

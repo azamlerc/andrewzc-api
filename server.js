@@ -31,6 +31,8 @@ import { chat, preload } from "./agent.js";
 import { helloBot } from "./agent-hello.js";
 import { senzaBot } from "./agent-senza.js";
 import { railfanBot } from "./agent-railfan.js";
+import { agentsRouter } from "./routes/agents.js";
+import { initScheduler } from "./agents/scheduler.js";
 
 dotenv.config();
 
@@ -718,6 +720,9 @@ app.get("/wiki", async (req, res) => {
   }
 });
 
+// ---- Agents ----
+app.use("/agents", requireAdminSession, agentsRouter);
+
 // ---- Index ----
 
 app.get("/", (_req, res) => {
@@ -771,6 +776,8 @@ app.get("/", (_req, res) => {
       preload(railfanBot),
     ]);
     app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
+    // Start agents after server is listening
+    await initScheduler();
   } catch (err) {
     console.error("Startup failed:", err);
     process.exit(1);
