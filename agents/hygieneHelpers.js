@@ -17,7 +17,8 @@ export function countryToFlag(countryCode) {
 export function typeToEmoji(type) {
   const map = {
     metro: "🚇",
-    tram: "🚊",
+    monorail: "🚝",
+    tram: "🚋",
     "light-rail": "🚈",
     suburban: "🚆",
     "people-mover": "🚡",

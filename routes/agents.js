@@ -1,14 +1,15 @@
 // routes/agents.js
 // HTTP endpoints for all agents.
-// POST /agents/hygiene  { entityId }
-// POST /agents/hygiene/batch  {}   (manual batch trigger)
+// POST /agents/hygiene       { entityId }
+// POST /agents/hygiene/batch {}
+// POST /agents/projects      { dryRun? }
 //
-// All endpoints require admin auth (requireAuth middleware from server.js).
-// Returns the agent_runs record or a summary object.
+// All endpoints require admin auth (requireAdminSession middleware from server.js).
 
 import express from "express";
 import { ObjectId } from "mongodb";
 import { runForEntity, runBatch } from "../agents/hygiene.js";
+import { run as runProjects } from "../agents/projects.js";
 import { getRecentRuns } from "../agents/runRecords.js";
 
 export const agentsRouter = express.Router();
@@ -30,7 +31,6 @@ agentsRouter.post("/hygiene", async (req, res) => {
 
   try {
     if (dryRun) {
-      // Evaluate without writing — import evaluate directly
       const { connectToMongo } = await import("../database.js");
       const { evaluate } = await import("../agents/runner.js");
       const { RULES } = await import("../agents/hygieneRules.js");
@@ -73,6 +73,25 @@ agentsRouter.get("/hygiene/recent", async (req, res) => {
   }
 });
 
-// Placeholder routes for future agents
-// agentsRouter.post("/projects", ...)
-// agentsRouter.post("/proposals", ...)
+// POST /agents/projects — run the transit projects monitor
+agentsRouter.post("/projects", async (req, res) => {
+  const { dryRun = false } = req.body ?? {};
+  try {
+    const result = await runProjects("http", { dryRun });
+    return res.json(result);
+  } catch (err) {
+    console.error("[agents/projects] error:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /agents/projects/recent — recent runs for dashboard
+agentsRouter.get("/projects/recent", async (req, res) => {
+  const hours = parseInt(req.query.hours ?? "24") ;
+  try {
+    const runs = await getRecentRuns("projects", hours);
+    return res.json({ runs });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});

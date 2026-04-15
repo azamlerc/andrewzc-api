@@ -5,6 +5,7 @@
 import cron from "node-cron";
 import { connectToMongo } from "../database.js";
 import { runForEntity, runBatch, buildDailyDigest } from "./hygiene.js";
+import { run as runProjects } from "./projects.js";
 import { refreshNow as refreshPageCache } from "./pageCache.js";
 import { postHygieneFlag, postHygieneDigest, postAdmin } from "../connectors/slack.js";
 
@@ -13,13 +14,17 @@ let changeStream = null;
 export async function initScheduler() {
   console.log("[scheduler] initialising");
 
-	const db = await connectToMongo();
+  const db = await connectToMongo();
 
   // Pre-warm the page cache
   await refreshPageCache();
 
   // ---- Change stream: hygiene on every entity insert/update ----
-  startChangeStream(db);
+  if (process.env.NODE_ENV === "production") {
+    startChangeStream(db);
+  } else {
+    console.log("[scheduler] change stream disabled in development");
+  }
 
   // ---- Hourly: catch anything the change stream missed ----
   cron.schedule("0 * * * *", async () => {
@@ -27,8 +32,6 @@ export async function initScheduler() {
     try {
       const { summary } = await runBatch("cron-hourly");
       if (summary.flagged > 0) {
-        // Individual flags were already posted reactively; batch flags get a
-        // summary to #admin rather than flooding #hygiene
         await postAdmin(
           `Hourly hygiene batch: ${summary.fixed} fixes, ${summary.flagged} flagged`
         );
@@ -51,6 +54,22 @@ export async function initScheduler() {
     }
   });
 
+  // ---- Daily 06:05 UTC: transit projects monitor ----
+  cron.schedule("5 6 * * *", async () => {
+    console.log("[scheduler] cron: projects monitor");
+    try {
+      const result = await runProjects("cron-daily");
+      if (result?.summary?.inserted === 0) {
+        await postAdmin(
+          `Projects monitor: no new openings (${result.summary.active} checked)`
+        );
+      }
+    } catch (err) {
+      console.error("[scheduler] projects monitor error:", err.message);
+      await postAdmin(`⚠️ Projects monitor error: ${err.message}`);
+    }
+  });
+
   // ---- Hourly: refresh page cache ----
   cron.schedule("30 * * * *", async () => {
     try {
@@ -60,11 +79,7 @@ export async function initScheduler() {
     }
   });
 
-  // ---- Placeholder slots for future agents ----
-  // Projects monitor: daily 06:05 UTC (after digest)
-  // cron.schedule("5 6 * * *", () => projectsAgent.run("cron-daily"));
-
-  // Proposals: daily 07:00 UTC
+  // Proposals: daily 07:00 UTC (phase 2)
   // cron.schedule("0 7 * * *", () => proposalsAgent.run("cron-daily"));
 
   console.log("[scheduler] ready");
@@ -94,8 +109,6 @@ function startChangeStream(db) {
     changeStream.on("error", async (err) => {
       console.error("[scheduler] change stream error:", err.message);
       await postAdmin(`⚠️ Change stream error: ${err.message}`).catch(() => {});
-      // Atlas will resume automatically via resume token on reconnect;
-      // if the token has expired the hourly batch serves as fallback.
     });
 
     changeStream.on("close", () => {
@@ -105,7 +118,6 @@ function startChangeStream(db) {
     console.log("[scheduler] change stream listening");
   } catch (err) {
     console.error("[scheduler] failed to start change stream:", err.message);
-    // Don't crash the server — hourly cron is the fallback
   }
 }
 

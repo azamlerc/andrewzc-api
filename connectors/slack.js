@@ -47,7 +47,7 @@ export async function postHygieneFlag(entityKey, entityList, flagged) {
   const lines = flagged.map((f) => `• ${f.rule}: ${f.message}`).join("\n");
   const text =
     `⚠️ *${entityKey}* (${entityList}) needs review\n${lines}\n` +
-    `→ andrewzc.net/admin/entity/${entityKey}`;
+    `→ https://andrewzc.net/edit.html?list=${entityList}&key=${entityKey}`;
   return post("#hygiene", text);
 }
 
@@ -59,7 +59,7 @@ export async function postProjectOpening(entity, isNew) {
   const text =
     `${flag}${transport} *${entity.name}*${badge}\n` +
     `Opened ${entity.prefix}\n` +
-    `andrewzc.net/trains/projects#${entity.key}`;
+    `andrewzc.net/page.html?id=projects#${entity.key}`;
   const ts = await post("#projects", text);
   if (ts && isNew) await addReaction("#projects", ts, "sparkles");
   return ts;

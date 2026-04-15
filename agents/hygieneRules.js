@@ -222,7 +222,7 @@ const P2 = {
   scope: "flag",
   applies: (e) => e.list === "projects",
   check: (e) => {
-    const valid = ["metro", "tram", "light-rail", "suburban", "people-mover"];
+    const valid = ["metro", "tram", "light-rail", "suburban", "people-mover", "monorail"];
     return !valid.includes(e.type);
   },
   message: (e) => `type "${e.type}" is not a valid projects type`,
