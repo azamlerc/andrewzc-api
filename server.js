@@ -8,7 +8,7 @@ import { authRouter, requireAdminSession } from "./routes/auth.js";
 import { pagesRouter } from "./routes/pages.js";
 import { entitiesRouter } from "./routes/entities.js";
 import { lookupRouter } from "./routes/lookup.js";
-import { chatRouter, preloadBots } from "./routes/chat.js";
+import { chatRouter, preloadChats } from "./routes/chat.js";
 import { agentsRouter } from "./routes/agents.js";
 import { initScheduler } from "./agents/scheduler.js";
 
@@ -90,6 +90,7 @@ app.get("/", (_req, res) => {
     "DELETE /entities/:list/:key               (admin)",
     "POST /chat/hello",
     "POST /chat/senza",
+    "POST /chat/railfan               (admin)",
     "POST /search",
     "GET  /coords?url=&list=",
     "GET  /wiki?q=",
@@ -106,7 +107,7 @@ app.get("/", (_req, res) => {
 (async () => {
   try {
     await ensureIndexes();
-    await preloadBots();
+    await preloadChats();
     app.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
     await initScheduler();
   } catch (err) {

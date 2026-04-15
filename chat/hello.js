@@ -1,5 +1,5 @@
-// agent-hello.js — bot definition for hello.andrewzc.net
-// Personal travel/geography bot backed by the andrewzc MongoDB database.
+// chat/hello.js — chat definition for hello.andrewzc.net
+// Personal travel/geography chatbot backed by the andrewzc MongoDB database.
 
 import {
   getEntity,
@@ -12,7 +12,7 @@ import {
   getSimilarEntities,
   queryByProps,
   embedText,
-} from "./database.js";
+} from "../database.js";
 
 const CONTEXT_RAW = "https://raw.githubusercontent.com/azamlerc/hello-context/main";
 
@@ -199,9 +199,9 @@ async function executeTool(name, input) {
   }
 }
 
-// ---- Bot definition ----
+// ---- Chat definition ----
 
-export const helloBot = {
+export const helloChat = {
   name:        "hello",
   contextUrl:  CONTEXT_RAW,
   contextFiles: [

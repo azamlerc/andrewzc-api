@@ -1,30 +1,29 @@
-// agent.js — generic agentic loop for all bots
-// Each bot provides: contextUrl, buildTools(context), executeTool(name, input), getExtraContext()
+// chat/runtime.js — generic runtime for all chatbots
+// Each chatbot provides: contextUrl, buildTools(context), executeTool(name, input), getExtraContext()
 
 import Anthropic from "@anthropic-ai/sdk";
 
 const MODEL           = "claude-sonnet-4-6";
 const MAX_TOKENS      = 1024;
-const MAX_TOKENS_TERSE = 256; // for bots that reply in 1-2 sentences
 const TTL_MS     = 5 * 60 * 1000; // 5 minutes
 
-// ---- Context cache (per bot, keyed by contextUrl) ----
+// ---- Context cache (per chatbot, keyed by contextUrl) ----
 
 const contextCaches = new Map(); // contextUrl -> { prompt, cachedAt }
 
-async function loadContext(bot) {
-  // Bots can provide their own loadSystemPrompt() for custom assembly logic
-  if (bot.loadSystemPrompt) return bot.loadSystemPrompt();
+async function loadContext(chatbot) {
+  // Chatbots can provide their own loadSystemPrompt() for custom assembly logic
+  if (chatbot.loadSystemPrompt) return chatbot.loadSystemPrompt();
 
-  const cached = contextCaches.get(bot.contextUrl);
+  const cached = contextCaches.get(chatbot.contextUrl);
   if (cached && Date.now() - cached.cachedAt < TTL_MS) return cached.prompt;
 
   const files = await Promise.all(
-    bot.contextFiles.map(url => fetch(url).then(r => r.text()))
+    chatbot.contextFiles.map(url => fetch(url).then(r => r.text()))
   );
 
-  const prompt = bot.assemblePrompt(files);
-  contextCaches.set(bot.contextUrl, { prompt, cachedAt: Date.now() });
+  const prompt = chatbot.assemblePrompt(files);
+  contextCaches.set(chatbot.contextUrl, { prompt, cachedAt: Date.now() });
   return prompt;
 }
 
@@ -40,17 +39,17 @@ function stripImageMarkdown(text, cdnHost) {
 
 // ---- Main chat function ----
 
-export async function chat(bot, history, userMessage) {
+export async function runChat(chatbot, history, userMessage) {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("ANTHROPIC_API_KEY not configured");
   }
 
   const [systemPrompt, extraContext] = await Promise.all([
-    loadContext(bot),
-    bot.getExtraContext ? bot.getExtraContext() : Promise.resolve(null),
+    loadContext(chatbot),
+    chatbot.getExtraContext ? chatbot.getExtraContext() : Promise.resolve(null),
   ]);
 
-  const tools    = bot.buildTools(extraContext);
+  const tools    = chatbot.buildTools(extraContext);
   const client   = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const messages = [
     ...history,
@@ -62,8 +61,8 @@ export async function chat(bot, history, userMessage) {
 
   while (true) {
     const response = await client.messages.create({
-      model:      bot.model     ?? MODEL,
-      max_tokens: bot.maxTokens ?? MAX_TOKENS,
+      model:      chatbot.model     ?? MODEL,
+      max_tokens: chatbot.maxTokens ?? MAX_TOKENS,
       system:     systemPrompt,
       tools,
       messages,
@@ -76,7 +75,7 @@ export async function chat(bot, history, userMessage) {
         .filter(b => b.type === "text")
         .map(b => b.text)
         .join("");
-      const reply = stripImageMarkdown(raw, bot.imageCdnHost);
+      const reply = stripImageMarkdown(raw, chatbot.imageCdnHost);
       return { reply, images, list: imageList };
     }
 
@@ -87,12 +86,12 @@ export async function chat(bot, history, userMessage) {
           .map(async (toolUse) => {
             let result;
             try {
-              result = await bot.executeTool(toolUse.name, toolUse.input);
+              result = await chatbot.executeTool(toolUse.name, toolUse.input);
             } catch (err) {
               result = { error: String(err.message) };
             }
 
-            console.log(`[${bot.name}] tool=${toolUse.name} input=${JSON.stringify(toolUse.input)} images=${result?.images?.length ?? 0}`);
+            console.log(`[${chatbot.name}] tool=${toolUse.name} input=${JSON.stringify(toolUse.input)} images=${result?.images?.length ?? 0}`);
 
             // Capture images from any tool call that returns them
             if (result?.images?.length) {
@@ -121,12 +120,12 @@ export async function chat(bot, history, userMessage) {
   }
 }
 
-// ---- Preload a bot's context at startup ----
+// ---- Preload a chatbot's context at startup ----
 
-export async function preload(bot) {
+export async function preloadChat(chatbot) {
   await Promise.all([
-    loadContext(bot),
-    bot.getExtraContext ? bot.getExtraContext() : Promise.resolve(),
+    loadContext(chatbot),
+    chatbot.getExtraContext ? chatbot.getExtraContext() : Promise.resolve(),
   ]);
-  console.log(`[${bot.name}] context loaded (${bot.name})`);
+  console.log(`[${chatbot.name}] context loaded (${chatbot.name})`);
 }

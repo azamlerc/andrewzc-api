@@ -1,4 +1,4 @@
-// agent-railfan.js — Railfan, private field-editing bot for Andrew
+// chat/railfan.js — Railfan, private field-editing chat for Andrew
 // Requires admin session — POST /chat/railfan is protected by requireAdminSession.
 // All writes go through the same API functions as the admin UI.
 
@@ -10,7 +10,7 @@ import {
   enrichEntity,
   updatePage,
   createPage,
-} from "./database.js";
+} from "../database.js";
 
 const CONTEXT_RAW = "https://raw.githubusercontent.com/azamlerc/railfan-context/main";
 
@@ -193,9 +193,9 @@ ${sitemap}`;
   return cachedPrompt;
 }
 
-// ---- Bot definition ----
+// ---- Chat definition ----
 
-export const railfanBot = {
+export const railfanChat = {
   name:             "railfan",
   contextUrl:       CONTEXT_RAW,
   imageCdnHost:     null,

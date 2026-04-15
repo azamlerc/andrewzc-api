@@ -1,4 +1,4 @@
-// agent-senza.js — Sergio, the Senza developer documentation bot
+// chat/senza.js — Sergio, the Senza developer documentation chat
 // Answers questions about the Senza cloud TV platform.
 // Loads all 15 context files at startup; workflows and tutorials fetched on demand.
 
@@ -180,13 +180,13 @@ ${contextFiles.join("\n\n---\n\n")}
   return cachedPrompt;
 }
 
-// ---- Bot definition ----
+// ---- Chat definition ----
 
-export const senzaBot = {
+export const senzaChat = {
   name:             "senza",
   contextUrl:       REPO_RAW,    // used as cache key
   imageCdnHost:     null,
-  loadSystemPrompt,              // overrides generic TTL loader in agent.js
+  loadSystemPrompt,              // overrides generic TTL loader in chat/runtime.js
   buildTools,
   executeTool,
 };
