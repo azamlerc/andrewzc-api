@@ -3,8 +3,9 @@
 // Mounted at /imagine in server.js.
 
 import express from "express";
-import { getPrompts, getPrompt, getImagineModels, getImagineImages } from "../database.js";
+import { getPrompts, getPrompt, getImagineImages } from "../database.js";
 import { cleanError } from "./middleware.js";
+import { models } from "../config/models.js";
 
 export const imagineRouter = express.Router();
 
@@ -39,15 +40,9 @@ imagineRouter.get("/prompts/:id", async (req, res) => {
 });
 
 // GET /imagine/models
-// Returns distinct model slugs present in the images collection.
-imagineRouter.get("/models", async (_req, res) => {
-  try {
-    const models = await getImagineModels();
-    return res.json({ models });
-  } catch (err) {
-    console.error("GET /imagine/models failed:", err);
-    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
-  }
+// Returns model configuration from static config. No DB query needed.
+imagineRouter.get("/models", (_req, res) => {
+  return res.json({ models });
 });
 
 // GET /imagine/images
