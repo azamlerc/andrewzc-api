@@ -900,3 +900,144 @@ export async function revokeSession(sessionTokenHash) {
     { $set: { revokedAt: new Date() } }
   );
 }
+
+// ---- Imagine ----
+
+// Returns all prompts, optionally filtered by category.
+// category="new" returns the 80 prompts with the most recently created images.
+export async function getPrompts({ category } = {}) {
+  const db = await connectToMongo();
+
+  if (category === "new") {
+    // Collect most-recently-imaged prompt IDs (deduped, ordered by latest createdAt)
+    const recentImages = await db.collection("images")
+      .find({ project: "imagine" })
+      .project({ _id: 0, promptId: 1, createdAt: 1 })
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .toArray();
+
+    const seen = new Set();
+    const recentIds = [];
+    for (const img of recentImages) {
+      if (!seen.has(img.promptId)) {
+        seen.add(img.promptId);
+        recentIds.push(img.promptId);
+        if (recentIds.length === 80) break;
+      }
+    }
+
+    if (recentIds.length === 0) return [];
+
+    const prompts = await db.collection("prompts")
+      .find({ id: { $in: recentIds } })
+      .project({ _id: 0, id: 1, name: 1, emoji: 1, categories: 1, outtakes: 1 })
+      .toArray();
+
+    const promptMap = Object.fromEntries(prompts.map(p => [p.id, p]));
+    return recentIds.map(id => promptMap[id]).filter(Boolean);
+  }
+
+  const filter = category ? { categories: category } : {};
+  return db.collection("prompts")
+    .find(filter)
+    .project({ _id: 0, id: 1, name: 1, emoji: 1, categories: 1, outtakes: 1 })
+    .sort({ id: 1 })
+    .toArray();
+}
+
+// Returns a single prompt with its image records and prev/next IDs within a category.
+export async function getPrompt(id, { category } = {}) {
+  const db = await connectToMongo();
+
+  const [prompt, images] = await Promise.all([
+    db.collection("prompts").findOne({ id }, { projection: { _id: 0 } }),
+    db.collection("images")
+      .find({ project: "imagine", promptId: id })
+      .project({ _id: 0, model: 1, style: 1, createdAt: 1 })
+      .sort({ createdAt: 1 })
+      .toArray(),
+  ]);
+
+  if (!prompt) return null;
+
+  const { prevId, nextId } = await getImagineNeighbors(id, category, db);
+  return { prompt, images, prevId, nextId };
+}
+
+async function getImagineNeighbors(id, category, db) {
+  if (!category) return { prevId: null, nextId: null };
+
+  let ids;
+
+  if (category === "new") {
+    const recentImages = await db.collection("images")
+      .find({ project: "imagine" })
+      .project({ _id: 0, promptId: 1 })
+      .sort({ createdAt: -1 })
+      .limit(500)
+      .toArray();
+
+    const seen = new Set();
+    ids = [];
+    for (const img of recentImages) {
+      if (!seen.has(img.promptId)) {
+        seen.add(img.promptId);
+        ids.push(img.promptId);
+        if (ids.length === 80) break;
+      }
+    }
+  } else {
+    const prompts = await db.collection("prompts")
+      .find({ categories: category })
+      .project({ _id: 0, id: 1 })
+      .sort({ id: 1 })
+      .toArray();
+    ids = prompts.map(p => p.id);
+  }
+
+  const idx = ids.indexOf(id);
+  if (idx === -1) return { prevId: null, nextId: null };
+
+  return {
+    prevId: ids[(idx - 1 + ids.length) % ids.length],
+    nextId: ids[(idx + 1) % ids.length],
+  };
+}
+
+// Returns distinct model slugs present in the imagine images collection.
+export async function getImagineModels() {
+  const db = await connectToMongo();
+  const models = await db.collection("images").distinct("model", { project: "imagine" });
+  return models.sort();
+}
+
+// Returns image records for imagine, optionally filtered by model and/or style.
+export async function getImagineImages({ model, style } = {}) {
+  const db = await connectToMongo();
+  const filter = { project: "imagine" };
+  if (model) filter.model = model;
+  if (style) filter.style = style;
+
+  return db.collection("images")
+    .find(filter)
+    .project({ _id: 0, model: 1, promptId: 1, style: 1, createdAt: 1 })
+    .sort({ promptId: 1, model: 1, style: 1 })
+    .toArray();
+}
+
+// ---- Animals ----
+
+// Returns image records for animals, optionally filtered by artistId and/or style.
+export async function getAnimalsImages({ artistId, style } = {}) {
+  const db = await connectToMongo();
+  const filter = { project: "animals" };
+  if (artistId) filter.artistId = artistId;
+  if (style) filter.style = style;
+
+  return db.collection("images")
+    .find(filter)
+    .project({ _id: 0, artistId: 1, animal: 1, style: 1, createdAt: 1 })
+    .sort({ artistId: 1, animal: 1, style: 1 })
+    .toArray();
+}

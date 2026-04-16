@@ -166,3 +166,27 @@ Split the monolithic `server.js` into focused route modules to reduce file size 
 ### Result
 
 No functional changes. Each route file is independently editable without touching anything else. `server.js` is now a thin entry point.
+
+## April 15, 2026 Update — Chat Naming Cleanup
+
+### Summary
+
+Renamed the legacy chatbot modules from `agent` terminology to `chat` terminology so they no longer conflict conceptually with the newer autonomous agents system.
+
+### Changes Made
+
+- Created a new `chat/` folder for the conversational chatbots
+- Moved `agent.js` to `chat/runtime.js`
+- Moved `agent-hello.js` to `chat/hello.js`
+- Moved `agent-railfan.js` to `chat/railfan.js`
+- Moved `agent-senza.js` to `chat/senza.js`
+- Renamed shared runtime exports from `chat`/`preload` to `runChat`/`preloadChat`
+- Renamed chatbot definitions from `helloBot`, `railfanBot`, and `senzaBot` to `helloChat`, `railfanChat`, and `senzaChat`
+- Updated `routes/chat.js` and `server.js` to import the new chat-module paths and names
+- Removed an unused legacy top-level `chat.js` file that duplicated the old hello chatbot implementation
+- Fixed moved-file imports so the chat modules resolve `../database.js` correctly from their new directory
+- Updated the root `/` endpoint listing to include `POST /chat/railfan (admin)`
+
+### Result
+
+The codebase now uses `agents/` for autonomous background systems and `chat/` for user-facing conversational chatbots. That separation should make future growth less confusing and keep naming discipline clearer as the repo expands.
