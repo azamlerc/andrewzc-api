@@ -6,9 +6,9 @@
 
 export const models = [
   // ── 2026 ───────────────────────────────────────────────────────────────────
+  { id: "flux",     label: "Flux 2 Flex (Black Forest Labs)", deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
   { id: "gpt",      label: "OpenAI gpt-image-1",       deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
   { id: "nano",     label: "Gemini Flash (getimg v2)", deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
-  { id: "flux",     label: "Flux v2 (getimg v2)",      deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
   { id: "seedream", label: "Seedream 5 Lite (getimg v2)", deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
 
   // ── 2024 archive — deprecated ──────────────────────────────────────────────
