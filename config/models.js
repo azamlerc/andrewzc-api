@@ -5,6 +5,12 @@
 // which models and styles are valid; the API no longer queries the DB for this.
 
 export const models = [
+  // ── 2026 ───────────────────────────────────────────────────────────────────
+  { id: "gpt",      label: "OpenAI gpt-image-1",       deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
+  { id: "nano",     label: "Gemini Flash (getimg v2)", deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
+  { id: "flux",     label: "Flux v2 (getimg v2)",      deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
+  { id: "seedream", label: "Seedream 5 Lite (getimg v2)", deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
+
   // ── 2024 archive — deprecated ──────────────────────────────────────────────
   // Images exist in the DB but no new images are generated under these slugs.
   { id: "openai",   label: "OpenAI DALL·E 3",         deprecated: true,  styles: ["photo", "lego", "anime", "art", "pixar"] },
@@ -12,11 +18,6 @@ export const models = [
   { id: "gemini",   label: "Gemini (2024)",            deprecated: true,  styles: ["photo", "lego"] },
   { id: "meta",     label: "Meta (WhatsApp, manual)",  deprecated: true,  styles: ["photo", "lego", "anime", "pixar"] },
 
-  // ── 2026 ───────────────────────────────────────────────────────────────────
-  { id: "gpt",      label: "OpenAI gpt-image-1",       deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
-  { id: "nano",     label: "Gemini Flash (getimg v2)", deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
-  { id: "flux",     label: "Flux v2 (getimg v2)",      deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
-  { id: "seedream", label: "Seedream 5 Lite (getimg v2)", deprecated: false, styles: ["photo", "lego", "anime", "art", "pixar"] },
 ];
 
 // All non-deprecated models, for use in generation scripts and UI.
