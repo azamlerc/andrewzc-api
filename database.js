@@ -931,7 +931,7 @@ export async function getPrompts({ category } = {}) {
 
     const prompts = await db.collection("prompts")
       .find({ id: { $in: recentIds } })
-      .project({ _id: 0, id: 1, name: 1, emoji: 1, categories: 1, outtakes: 1 })
+      .project({ _id: 0, id: 1, name: 1, emoji: 1, categories: 1, prompt: 1, outtakes: 1 })
       .toArray();
 
     const promptMap = Object.fromEntries(prompts.map(p => [p.id, p]));
@@ -941,7 +941,7 @@ export async function getPrompts({ category } = {}) {
   const filter = category ? { categories: category } : {};
   return db.collection("prompts")
     .find(filter)
-    .project({ _id: 0, id: 1, name: 1, emoji: 1, categories: 1, outtakes: 1 })
+    .project({ _id: 0, id: 1, name: 1, emoji: 1, categories: 1, prompt: 1, outtakes: 1 })
     .sort({ id: 1 })
     .toArray();
 }
