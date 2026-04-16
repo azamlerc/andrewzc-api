@@ -190,3 +190,46 @@ Renamed the legacy chatbot modules from `agent` terminology to `chat` terminolog
 ### Result
 
 The codebase now uses `agents/` for autonomous background systems and `chat/` for user-facing conversational chatbots. That separation should make future growth less confusing and keep naming discipline clearer as the repo expands.
+
+## April 15, 2026 Update — Imagine & Animals API
+
+### Summary
+
+Added API endpoints for the imagine and animals image generation projects, porting them from a static S3-hosted frontend to a proper database-backed API.
+
+### Background
+
+In 2024, approximately 10,000 images were generated across two sites: **imagine** (prompt-driven, ~1,008 prompts) and **animals** (82 animals × 24 artist/genre styles). Both sites were previously static HTML pages that discovered images by attempting to load filenames from S3, with no database. Phase 1 of a modernization effort migrated all prompts and image records to MongoDB, and this update wires up the API layer.
+
+### New Files
+
+- `config/animals.js` — static artist configuration for the animals project (24 artists with id, name, emoji, styles array, and `short` flag indicating which use the 20-animal subset vs. full 82-animal set)
+- `routes/imagine.js` — imagine endpoints, mounted at `/imagine`
+- `routes/animals.js` — animals endpoints, mounted at `/animals`
+
+### New Endpoints
+
+```
+GET /imagine/prompts                — all prompts; ?category= filters by category;
+                                      category=new returns the 80 prompts with the
+                                      most recently created images
+GET /imagine/prompts/:id            — single prompt with its image records;
+                                      ?category= returns prevId/nextId for
+                                      navigation within that category (wraps around)
+GET /imagine/models                 — distinct model slugs present in images collection
+GET /imagine/images?model=&style=   — image records filtered by model and/or style
+GET /animals/artists                — static artist list from config/animals.js
+GET /animals/images?artist=&style=  — animal image records filtered by artist and/or style
+```
+
+### New Database Functions (`database.js`)
+
+- `getPrompts({ category })` — fetches all prompts; handles `category=new` by querying the most recently created image records and returning the 80 distinct prompts they belong to, in recency order
+- `getPrompt(id, { category })` — fetches a single prompt with its image records plus `prevId`/`nextId` for navigation within the given category
+- `getImagineModels()` — `distinct` query on the images collection
+- `getImagineImages({ model, style })` — filtered image records for imagine
+- `getAnimalsImages({ artistId, style })` — filtered image records for animals
+
+### Result
+
+The API now exposes the full imagine and animals datasets. The frontend can render pages from database records rather than probing S3 for file existence, and navigation between prompts within a category is server-driven with wrap-around prev/next IDs.
