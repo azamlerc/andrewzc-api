@@ -3,9 +3,10 @@
 // Mounted at /imagine in server.js.
 
 import express from "express";
-import { getPrompts, getPrompt, getImagineImages } from "../database.js";
+import { getPrompts, getPrompt, getImagineImages, rateImagineImage, deleteImagineImage } from "../database.js";
 import { cleanError } from "./middleware.js";
 import { models } from "../config/models.js";
+import { requireAdminSession } from "./auth.js";
 
 export const imagineRouter = express.Router();
 
@@ -55,6 +56,35 @@ imagineRouter.get("/images", async (req, res) => {
     return res.json({ images });
   } catch (err) {
     console.error("GET /imagine/images failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+// PATCH /imagine/images/:promptId/:model/:style  (requires auth)
+// Sets (or clears) the rating on a single image. Body: { rating: 1–5 } or { rating: null/0 }.
+imagineRouter.patch("/images/:promptId/:model/:style", requireAdminSession, async (req, res) => {
+  const { promptId, model, style } = req.params;
+  const { rating } = req.body ?? {};
+  try {
+    const doc = await rateImagineImage(promptId, model, style, rating);
+    if (!doc) return res.status(404).json({ error: "not_found", message: "Image record not found" });
+    return res.json({ image: doc });
+  } catch (err) {
+    console.error("PATCH /imagine/images/:promptId/:model/:style failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+// DELETE /imagine/images/:promptId/:model/:style  (requires auth)
+// Removes the image record from the DB so it will be regenerated on the next run.
+imagineRouter.delete("/images/:promptId/:model/:style", requireAdminSession, async (req, res) => {
+  const { promptId, model, style } = req.params;
+  try {
+    const deleted = await deleteImagineImage(promptId, model, style);
+    if (!deleted) return res.status(404).json({ error: "not_found", message: "Image record not found" });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /imagine/images/:promptId/:model/:style failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });

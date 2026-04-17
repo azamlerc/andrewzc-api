@@ -954,7 +954,7 @@ export async function getPrompt(id, { category } = {}) {
     db.collection("prompts").findOne({ id }, { projection: { _id: 0 } }),
     db.collection("images")
       .find({ project: "imagine", promptId: id })
-      .project({ _id: 0, model: 1, style: 1, createdAt: 1 })
+      .project({ _id: 0, model: 1, style: 1, createdAt: 1, rating: 1 })
       .sort({ createdAt: 1 })
       .toArray(),
   ]);
@@ -1021,9 +1021,34 @@ export async function getImagineImages({ model, style } = {}) {
 
   return db.collection("images")
     .find(filter)
-    .project({ _id: 0, model: 1, promptId: 1, style: 1, createdAt: 1 })
+    .project({ _id: 0, model: 1, promptId: 1, style: 1, createdAt: 1, rating: 1 })
     .sort({ promptId: 1, model: 1, style: 1 })
     .toArray();
+}
+
+// Sets or clears the rating (1–5) on a single imagine image record.
+// Pass rating=null or rating=0 to clear.
+export async function rateImagineImage(promptId, model, style, rating) {
+  const db = await connectToMongo();
+  const update = (rating && rating >= 1 && rating <= 5)
+    ? { $set: { rating: Number(rating), updatedAt: new Date() } }
+    : { $unset: { rating: "" }, $set: { updatedAt: new Date() } };
+
+  const result = await db.collection("images").findOneAndUpdate(
+    { project: "imagine", promptId, model, style },
+    update,
+    { returnDocument: "after" }
+  );
+  return result?.value ?? result ?? null;
+}
+
+// Removes a single imagine image record so it will be regenerated on the next run.
+export async function deleteImagineImage(promptId, model, style) {
+  const db = await connectToMongo();
+  const result = await db.collection("images").findOneAndDelete(
+    { project: "imagine", promptId, model, style }
+  );
+  return result?.value ?? result ?? null;
 }
 
 // ---- Animals ----
