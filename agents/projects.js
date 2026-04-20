@@ -27,18 +27,13 @@ export async function run(trigger = "cron-daily", { dryRun = false } = {}) {
 
   const db = await connectToMongo();
 
-  // Fetch and parse urbanrail.net
+  // Fetch and parse urbanrail.net (cutoff date is read inside fetchOpenings)
   let openings;
   try {
     openings = await fetchOpenings();
   } catch (err) {
     console.error("[projects] failed to fetch openings:", err.message);
-    await writeRunRecord({
-      agent: "projects",
-      trigger,
-      summary: { error: err.message },
-      error: err.message,
-    });
+    await writeRunRecord({ agent: "projects", trigger, summary: { error: err.message }, error: err.message });
     await postAdmin(`⚠️ Projects monitor failed to fetch urbanrail.net: ${err.message}`);
     return null;
   }
@@ -47,9 +42,7 @@ export async function run(trigger = "cron-daily", { dryRun = false } = {}) {
   const active = openings.filter((o) => !o.isClosure);
   console.log(`[projects] ${active.length} active openings, ${openings.length - active.length} closures skipped`);
 
-  // Load existing projects for duplicate detection:
-  // - existingKeys: exact key collision check
-  // - existingByRef: grouped by city for fuzzy match and possible-duplicate detection
+  // Load existing projects for duplicate detection
   const existing = await db
     .collection("entities")
     .find({ list: "projects" })
@@ -71,11 +64,12 @@ export async function run(trigger = "cron-daily", { dryRun = false } = {}) {
   for (const opening of active) {
     const entity = await buildEntity(opening, existingKeys);
     if (!entity) {
-      skipped.push({ opening, reason: "build failed" });
+      // buildEntity returns null if the base key already exists — skip silently
+      skipped.push({ opening, reason: "key already exists or build failed" });
       continue;
     }
 
-    // Exact key match — already exists
+    // Exact key match — already exists (shouldn't reach here given buildEntity change, but safety net)
     if (existingKeys.has(entity.key)) {
       skipped.push({ opening, reason: "already exists (key match)" });
       continue;
@@ -109,11 +103,6 @@ export async function run(trigger = "cron-daily", { dryRun = false } = {}) {
     `[projects] ${toInsert.length} new, ${toUpdate.length} date updates, ` +
     `${possibleDuplicates.length} possible duplicates, ${skipped.length} skipped`
   );
-  if (possibleDuplicates.length) {
-    for (const d of possibleDuplicates) {
-      console.log(`[projects] possible duplicate: "${d.newName}" (${d.newKey}) ~ "${d.existingName}" (${d.existingKey})`);
-    }
-  }
 
   if (dryRun) {
     console.log("[projects] dry run — not inserting");
@@ -193,14 +182,18 @@ export async function run(trigger = "cron-daily", { dryRun = false } = {}) {
 
   console.log("[projects] run complete:", summary);
 
-  // Advance cutoff date to the most recent inserted entry
-  if (inserted.length > 0) {
-    const latestDate = inserted
-      .map((e) => e.prefix)
-      .filter((p) => /^\d{4}-\d{2}-\d{2}$/.test(p))
-      .sort()
-      .reverse()[0];
-    if (latestDate) await updateLastInsertedDate(latestDate);
+  // Advance cutoff to the most recent date processed this run — whether
+  // inserted, updated, or skipped. This prevents re-parsing entries we've
+  // already handled (including ones we skipped because they were duplicates).
+  const allDates = [
+    ...inserted.map((e) => e.prefix),
+    ...updated.map((u) => u.prefix),
+    ...active.map((o) => o.date),
+  ].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+
+  if (allDates.length > 0) {
+    const latestDate = allDates.sort().reverse()[0];
+    await updateLastInsertedDate(latestDate);
   }
 
   await writeRunRecord({
@@ -216,8 +209,6 @@ export async function run(trigger = "cron-daily", { dryRun = false } = {}) {
 }
 
 // ---- Fuzzy duplicate detection (undated entries only) ----
-// Looks for an existing entry in the same city with a similar name that has
-// no real date yet. If found, we update its prefix instead of inserting.
 
 function findFuzzyMatch(entity, existingByRef) {
   const candidates = existingByRef.get(entity.reference) ?? [];
@@ -242,26 +233,22 @@ function findFuzzyMatch(entity, existingByRef) {
 }
 
 // ---- Possible duplicate detection (dated entries) ----
-// Looks for an existing dated entry in the same city with a similar name.
-// Does NOT block insertion — just flags for human review.
 
 function findPossibleDuplicate(entity, existingByRef) {
   const candidates = existingByRef.get(entity.reference) ?? [];
-  // Only look at dated entries (undated ones are handled by findFuzzyMatch above)
   const dated = candidates.filter(
     (c) => c.prefix && c.prefix !== "20??" && !/^20\d{2}$/.test(c.prefix)
   );
   if (!dated.length) return null;
 
   const newWords = tokenize(entity.name);
-  if (newWords.length === 0) return null; // "Metro" etc. — too generic to match reliably
+  if (newWords.length === 0) return null;
 
   for (const candidate of dated) {
     const candidateWords = tokenize(candidate.name);
     if (candidateWords.length === 0) continue;
     const overlap = newWords.filter((w) => candidateWords.includes(w));
     const minLen = Math.min(newWords.length, candidateWords.length);
-    // Slightly stricter threshold than fuzzy match to reduce noise
     if (overlap.length >= 2 && overlap.length / minLen >= 0.6) {
       return candidate;
     }
@@ -271,7 +258,6 @@ function findPossibleDuplicate(entity, existingByRef) {
 }
 
 // ---- Tokenize name for fuzzy comparison ----
-// Strips stop words and short tokens to focus on meaningful identifiers.
 
 function tokenize(name) {
   const STOP = new Set(["to", "the", "a", "an", "and", "of", "in", "at", "line", "metro", "tram"]);
@@ -285,6 +271,10 @@ function tokenize(name) {
 }
 
 // ---- Build a full entity document from a parsed opening ----
+// Returns null if the base key already exists in existingKeys — this means
+// the entry was already handled (inserted, or exists from a previous run/manual
+// entry). The -N suffix loop is only for genuine same-name collisions within
+// a single run (e.g. two different Delhi Metro extensions with the same name).
 
 async function buildEntity(opening, existingKeys) {
   if (!opening.city || !opening.date) return null;
@@ -292,10 +282,6 @@ async function buildEntity(opening, existingKeys) {
   const type = normalizeType(opening.type);
   const country = opening.country?.toUpperCase() ?? null;
 
-  // Name convention (city-free, short):
-  //   New system  → "Metro", "Tram", "Light Rail" etc.
-  //   New line    → line name only e.g. "Line 5", "T6"
-  //   Extension   → "Line X to Destination" or "to Destination"
   let name;
   if (opening.isNewSystem) {
     name = TYPE_LABELS[type] ?? "Metro";
@@ -310,10 +296,15 @@ async function buildEntity(opening, existingKeys) {
     }
   }
 
-  // Key: city + name, kebab-cased, unique within existing keys
   const baseKey = toKebabCase(`${opening.city} ${name}`);
   if (!baseKey) return null;
 
+  // If the base key already exists, this entry has already been handled —
+  // return null so the caller skips it rather than creating a -2 variant.
+  if (existingKeys.has(baseKey)) return null;
+
+  // Handle genuine within-run key collisions (e.g. two entries with same
+  // generated name in a single parse) by appending -2, -3, etc.
   let key = baseKey;
   let i = 2;
   while (existingKeys.has(key)) {
@@ -321,11 +312,9 @@ async function buildEntity(opening, existingKeys) {
     if (i > 10) return null;
   }
 
-  // Badges — only for genuinely new systems
   const badges = [];
   if (opening.isNewSystem) badges.push("✨");
 
-  // Icons: country flag + transport emoji
   const icons = [];
   if (country) {
     const flag = countryToFlag(country);
@@ -334,7 +323,6 @@ async function buildEntity(opening, existingKeys) {
   const transportEmoji = typeToEmoji(type);
   if (transportEmoji) icons.push(transportEmoji);
 
-  // Wikipedia link
   let link = null;
   try {
     const query = opening.lineName
