@@ -1,6 +1,11 @@
 // agents/scheduler.js
-// Initialises the change stream listener and all cron jobs.
+// Initialises cron jobs.
 // Called once at server startup: initScheduler()
+//
+// NOTE: The change stream (reactive hygiene) and hourly hygiene batch are
+// currently disabled to avoid OpenAI API costs from the U4 Wikipedia lookup
+// rule firing on every entity write. Hygiene can still be triggered manually
+// via POST /agents/hygiene and POST /agents/hygiene/batch.
 
 import cron from "node-cron";
 import { connectToMongo } from "../database.js";
@@ -20,27 +25,27 @@ export async function initScheduler() {
   await refreshPageCache();
 
   // ---- Change stream: hygiene on every entity insert/update ----
-  if (process.env.NODE_ENV === "production") {
-    startChangeStream(db);
-  } else {
-    console.log("[scheduler] change stream disabled in development");
-  }
+  // Disabled — re-enable when OpenAI costs are acceptable.
+  // if (process.env.NODE_ENV === "production") {
+  //   startChangeStream(db);
+  // }
 
   // ---- Hourly: catch anything the change stream missed ----
-  cron.schedule("0 * * * *", async () => {
-    console.log("[scheduler] cron: hourly hygiene batch");
-    try {
-      const { summary } = await runBatch("cron-hourly");
-      if (summary.flagged > 0) {
-        await postAdmin(
-          `Hourly hygiene batch: ${summary.fixed} fixes, ${summary.flagged} flagged`
-        );
-      }
-    } catch (err) {
-      console.error("[scheduler] hourly batch error:", err.message);
-      await postAdmin(`⚠️ Hourly hygiene batch error: ${err.message}`);
-    }
-  });
+  // Disabled — re-enable when OpenAI costs are acceptable.
+  // cron.schedule("0 * * * *", async () => {
+  //   console.log("[scheduler] cron: hourly hygiene batch");
+  //   try {
+  //     const { summary } = await runBatch("cron-hourly");
+  //     if (summary.flagged > 0) {
+  //       await postAdmin(
+  //         `Hourly hygiene batch: ${summary.fixed} fixes, ${summary.flagged} flagged`
+  //       );
+  //     }
+  //   } catch (err) {
+  //     console.error("[scheduler] hourly batch error:", err.message);
+  //     await postAdmin(`⚠️ Hourly hygiene batch error: ${err.message}`);
+  //   }
+  // });
 
   // ---- Daily 06:00 UTC: hygiene digest ----
   cron.schedule("0 6 * * *", async () => {
@@ -82,7 +87,7 @@ export async function initScheduler() {
   // Proposals: daily 07:00 UTC (phase 2)
   // cron.schedule("0 7 * * *", () => proposalsAgent.run("cron-daily"));
 
-  console.log("[scheduler] ready");
+  console.log("[scheduler] ready (change stream and hourly hygiene disabled)");
 }
 
 // ---- Change stream ----
