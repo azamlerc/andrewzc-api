@@ -129,7 +129,28 @@ function hoistPropForPage(entity, propKey, { prefixProp, referenceProp } = {}) {
   return rest;
 }
 
-export async function getPageWithEntities(key) {
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildPageEntityFilter({ q = null, countries = [] } = {}) {
+  const filter = {};
+
+  if (q) {
+    filter.name = { $regex: escapeRegex(q), $options: "i" };
+  }
+
+  if (Array.isArray(countries) && countries.length > 0) {
+    filter.$or = [
+      { country: { $in: countries } },
+      { countries: { $in: countries } },
+    ];
+  }
+
+  return filter;
+}
+
+export async function getPageWithEntities(key, filters = {}) {
   const db       = await connectToMongo();
   const pages    = db.collection("pages");
   const entities = db.collection("entities");
@@ -139,16 +160,17 @@ export async function getPageWithEntities(key) {
 
   let docs;
   const hoistOptions = { prefixProp: page.prefixProp, referenceProp: page.referenceProp };
+  const entityFilter = buildPageEntityFilter(filters);
 
   if (page.propertyOf) {
     docs = await entities
-      .find({ list: page.propertyOf, [`props.${key}`]: { $exists: true } })
+      .find({ list: page.propertyOf, [`props.${key}`]: { $exists: true }, ...entityFilter })
       .sort({ name: 1, key: 1 })
       .toArray();
     docs = docs.map(entity => hoistPropForPage(entity, key, hoistOptions));
   } else {
     docs = await entities
-      .find({ list: key })
+      .find({ list: key, ...entityFilter })
       .sort({ name: 1, key: 1 })
       .toArray();
   }

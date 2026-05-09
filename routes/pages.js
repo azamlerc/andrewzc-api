@@ -40,8 +40,16 @@ pagesRouter.get("/:id", async (req, res) => {
 });
 
 pagesRouter.get("/:id/entities", async (req, res) => {
+  const q = req.query.q ? String(req.query.q).trim() : null;
+  const countries = req.query.country
+    ? String(req.query.country)
+      .split(",")
+      .map(code => code.trim().toUpperCase())
+      .filter(Boolean)
+    : [];
+
   try {
-    const result = await getPageWithEntities(req.params.id);
+    const result = await getPageWithEntities(req.params.id, { q, countries });
     if (!result) return res.status(404).json({ error: "page_not_found", message: `No page found for key='${req.params.id}'` });
     return res.json({
       "--info--": strip(result.page),

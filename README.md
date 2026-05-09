@@ -148,6 +148,11 @@ GET /pages/:key/entities
 ```
 Returns the page metadata and all entities belonging to it.
 
+Optional query parameters:
+
+- `q=<text>` filters entities whose `name` contains the text, case-insensitively
+- `country=fr,be,nl` filters to entities whose `country` or `countries` contains any of the listed ISO codes
+
 - [/pages/metros](https://api.andrewzc.net/pages/metros)
 - [/pages/confluence](https://api.andrewzc.net/pages/confluence)
 - [/pages/cathedrals](https://api.andrewzc.net/pages/cathedrals)
