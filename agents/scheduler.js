@@ -1,18 +1,14 @@
 // agents/scheduler.js
-// Initialises cron jobs.
+// Initialises cron jobs and the change stream.
 // Called once at server startup: initScheduler()
-//
-// NOTE: The change stream (reactive hygiene) and hourly hygiene batch are
-// currently disabled to avoid OpenAI API costs from the U4 Wikipedia lookup
-// rule firing on every entity write. Hygiene can still be triggered manually
-// via POST /agents/hygiene and POST /agents/hygiene/batch.
 
 import cron from "node-cron";
 import { connectToMongo } from "../database.js";
-import { runForEntity, runBatch, buildDailyDigest } from "./hygiene.js";
+import { runBatch, buildDailyDigest } from "./hygiene.js";
 import { run as runProjects } from "./projects.js";
 import { refreshNow as refreshPageCache } from "./pageCache.js";
-import { postHygieneFlag, postHygieneDigest, postAdmin } from "../connectors/slack.js";
+import { postHygieneDigest, postAdmin } from "../connectors/slack.js";
+import { deriveCountryPatch } from "../utils.js";
 
 let changeStream = null;
 
@@ -24,28 +20,8 @@ export async function initScheduler() {
   // Pre-warm the page cache
   await refreshPageCache();
 
-  // ---- Change stream: hygiene on every entity insert/update ----
-  // Disabled — re-enable when OpenAI costs are acceptable.
-  // if (process.env.NODE_ENV === "production") {
-  //   startChangeStream(db);
-  // }
-
-  // ---- Hourly: catch anything the change stream missed ----
-  // Disabled — re-enable when OpenAI costs are acceptable.
-  // cron.schedule("0 * * * *", async () => {
-  //   console.log("[scheduler] cron: hourly hygiene batch");
-  //   try {
-  //     const { summary } = await runBatch("cron-hourly");
-  //     if (summary.flagged > 0) {
-  //       await postAdmin(
-  //         `Hourly hygiene batch: ${summary.fixed} fixes, ${summary.flagged} flagged`
-  //       );
-  //     }
-  //   } catch (err) {
-  //     console.error("[scheduler] hourly batch error:", err.message);
-  //     await postAdmin(`⚠️ Hourly hygiene batch error: ${err.message}`);
-  //   }
-  // });
+  // ---- Change stream: set country/countries from flag emoji on every entity write ----
+  startChangeStream(db);
 
   // ---- Daily 06:00 UTC: hygiene digest ----
   cron.schedule("0 6 * * *", async () => {
@@ -84,10 +60,7 @@ export async function initScheduler() {
     }
   });
 
-  // Proposals: daily 07:00 UTC (phase 2)
-  // cron.schedule("0 7 * * *", () => proposalsAgent.run("cron-daily"));
-
-  console.log("[scheduler] ready (change stream and hourly hygiene disabled)");
+  console.log("[scheduler] ready");
 }
 
 // ---- Change stream ----
@@ -95,19 +68,44 @@ export async function initScheduler() {
 function startChangeStream(db) {
   try {
     changeStream = db.collection("entities").watch(
-      [{ $match: { operationType: { $in: ["insert", "update"] } } }],
+      [{ $match: { operationType: { $in: ["insert", "update", "replace"] } } }],
       { fullDocument: "updateLookup" }
     );
 
     changeStream.on("change", async (event) => {
-      const entityId = event.documentKey._id;
+      const doc = event.fullDocument;
+      if (!doc) return;
+
+      // Skip if the change itself set country/countries (avoids looping on our own writes)
+      const updatedFields = event.updateDescription?.updatedFields ?? {};
+      if ("country" in updatedFields || "countries" in updatedFields) return;
+
+      // Skip if entity already has country or countries
+      if (doc.country || (Array.isArray(doc.countries) && doc.countries.length > 0)) return;
+
+      // Derive from flag emoji in icons
+      const icons = doc.icons;
+      if (!Array.isArray(icons) || icons.length === 0) return;
+
       try {
-        const result = await runForEntity(entityId, "change-stream");
-        if (result?.flagged?.length) {
-          await postHygieneFlag(result.entityKey, result.entityList, result.flagged);
-        }
+        // Fetch page tags to respect "no-country"
+        const page = await db.collection("pages").findOne(
+          { key: doc.list },
+          { projection: { tags: 1 } }
+        );
+        const patch = deriveCountryPatch(icons, page?.tags ?? []);
+        if (!patch) return;
+
+        // Build update: set the derived field, unset the other
+        const $set   = {};
+        const $unset = {};
+        if (patch.country !== undefined)   { $set.country   = patch.country;   $unset.countries = ""; }
+        if (patch.countries !== undefined) { $set.countries = patch.countries; $unset.country   = ""; }
+
+        const update = Object.keys($unset).length ? { $set, $unset } : { $set };
+        await db.collection("entities").updateOne({ _id: doc._id }, update);
       } catch (err) {
-        console.error("[scheduler] change stream handler error:", err.message);
+        console.error("[scheduler] change stream country update error:", err.message);
       }
     });
 
