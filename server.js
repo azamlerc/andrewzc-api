@@ -67,6 +67,7 @@ app.get("/", (_req, res) => {
     "GET  /pages",
     "GET  /pages/summaries",
     "GET  /pages/:id",
+    "GET  /pages/:id/countries",
     "GET  /pages/:id/entities",
     "POST /pages                       (admin)",
     "PUT  /pages/:id                   (admin)",

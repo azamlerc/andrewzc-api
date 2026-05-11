@@ -178,6 +178,66 @@ export async function getPageWithEntities(key, filters = {}) {
   return { page, entities: docs };
 }
 
+export async function getPageCountries(key) {
+  const db       = await connectToMongo();
+  const pages    = db.collection("pages");
+  const entities = db.collection("entities");
+
+  const page = await pages.findOne({ key });
+  if (!page) return null;
+
+  const pageMatch = page.propertyOf
+    ? { list: page.propertyOf, [`props.${key}`]: { $exists: true } }
+    : { list: key };
+
+  const countries = await entities.aggregate([
+    { $match: pageMatch },
+    { $project: {
+      codes: { $ifNull: ["$countries", ["$country"]] },
+    }},
+    { $match: { codes: { $ne: null }, "codes.0": { $exists: true } } },
+    { $unwind: "$codes" },
+    { $match: { codes: { $type: "string", $ne: "" } } },
+    { $group: {
+      _id: { $toUpper: "$codes" },
+      count: { $sum: 1 },
+    }},
+    { $match: { count: { $gte: 2 } } },
+    { $lookup: {
+      from: "entities",
+      let: { code: "$_id" },
+      pipeline: [
+        { $match: {
+          $expr: {
+            $and: [
+              { $eq: ["$list", "countries"] },
+              { $eq: [{ $toUpper: "$country" }, "$$code"] },
+            ],
+          },
+        }},
+        { $project: {
+          _id: 0,
+          name: 1,
+          country: { $toUpper: "$country" },
+          icon: { $ifNull: [{ $arrayElemAt: ["$icons", 0] }, ""] },
+        }},
+      ],
+      as: "countryEntity",
+    }},
+    { $unwind: "$countryEntity" },
+    { $project: {
+      _id: 0,
+      name: "$countryEntity.name",
+      country: "$countryEntity.country",
+      icon: "$countryEntity.icon",
+      count: 1,
+    }},
+    { $sort: { count: -1, name: 1, country: 1 } },
+  ]).toArray();
+
+  return { page, countries };
+}
+
 function collectMatchedPlaces(entity, scope, codes) {
   const matched = new Set();
 

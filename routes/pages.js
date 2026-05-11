@@ -2,7 +2,7 @@
 // GET/POST/PUT /pages and /pages/:id/entities
 
 import express from "express";
-import { getPage, getPages, getPageSummaries, getPageWithEntities, createPage, updatePage } from "../database.js";
+import { getPage, getPages, getPageSummaries, getPageWithEntities, getPageCountries, createPage, updatePage } from "../database.js";
 import { requireAdminSession } from "./auth.js";
 import { strip, cleanError } from "./middleware.js";
 
@@ -57,6 +57,20 @@ pagesRouter.get("/:id/entities", async (req, res) => {
     });
   } catch (err) {
     console.error("GET /pages/:id/entities failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+pagesRouter.get("/:id/countries", async (req, res) => {
+  try {
+    const result = await getPageCountries(req.params.id);
+    if (!result) return res.status(404).json({ error: "page_not_found", message: `No page found for key='${req.params.id}'` });
+    return res.json({
+      "--info--": strip(result.page),
+      countries: result.countries,
+    });
+  } catch (err) {
+    console.error("GET /pages/:id/countries failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
