@@ -36,66 +36,36 @@ function makeResult(lat, lon) {
 
 // ─── DMS / mixed coordinate parser (mirrors parseCoordinates in wiki.swift) ───
 
-/**
- * Parse a Wikipedia {{coord}} inner string (pipe-separated) into decimal degrees.
- * Handles:
- *   decimal:          "51.5074|N|-0.1278|W"  or  "51.5074|-0.1278"
- *   deg+dir:          "51|N|0|W"
- *   deg+min+dir:      "51|30|N|0|7|W"
- *   deg+min+sec+dir:  "51|30|26.64|N|0|7|39.96|W"
- */
 function parseWikiCoord(inner) {
   let parts = inner.split("|").map(s => s.trim());
-
-  // Strip leading display hint
   if (parts.length > 2 && parts[0] === "display=title") parts.shift();
   if (parts.length > 2 && /^display=/i.test(parts[0])) parts.shift();
-
-  // Strip trailing display hint that sometimes appears at the end
   if (parts.length > 2 && /^display=/i.test(parts[parts.length - 1])) parts.pop();
-
-  // Strip any "type:", "region:", "scale:" hints
   parts = parts.filter(p => !/^(type:|region:|scale:|name=)/i.test(p));
-
   const N = parts.length;
-
-  // Fully decimal, no directions: "lat|lon"
   if (N === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
     return { lat: parseFloat(parts[0]), lon: parseFloat(parts[1]) };
   }
-
-  // Normalise Spanish cardinal letters: O (Oeste) → W
   const normDir = p => p === "O" ? "W" : p;
-
-  // Find direction indices (N/S for lat; E/W/O for lon)
   const latDirIdx = parts.findIndex(p => p === "N" || p === "S");
   const lonDirIdx = parts.findIndex((p, i) => (p === "E" || p === "W" || p === "O") && i > latDirIdx);
-
   if (latDirIdx === -1 || lonDirIdx === -1) return null;
-
   function dms(degIdx, dirIdx) {
     const sign = (normDir(parts[dirIdx]) === "S" || normDir(parts[dirIdx]) === "W") ? -1 : 1;
-    const count = dirIdx - degIdx; // number of numeric parts before direction
+    const count = dirIdx - degIdx;
     const deg = parseFloat(parts[degIdx]) || 0;
     const min = count >= 2 ? (parseFloat(parts[degIdx + 1]) || 0) : 0;
     const sec = count >= 3 ? (parseFloat(parts[degIdx + 2]) || 0) : 0;
     return sign * (deg + min / 60 + sec / 3600);
   }
-
   const lat = dms(0, latDirIdx);
   const lon = dms(latDirIdx + 1, lonDirIdx);
   if (isNaN(lat) || isNaN(lon)) return null;
   return { lat, lon };
 }
 
-/**
- * Parse a "deg°min′sec″DIR" DMS string into a decimal number.
- * Also handles plain decimal strings (optionally with a direction letter).
- */
 function parseDMSComponent(s) {
   s = s.trim();
-
-  // Plain decimal with optional direction (including Spanish O for Oeste)
   const decMatch = s.match(/^([+-]?\d+(?:\.\d+)?)\s*([NSEWOnsew]?)$/);
   if (decMatch) {
     let v = parseFloat(decMatch[1]);
@@ -103,8 +73,6 @@ function parseDMSComponent(s) {
     if (dir === "S" || dir === "W" || dir === "O") v = -v;
     return v;
   }
-
-  // DMS: degrees°minutes′seconds″DIR  (seconds optional, O accepted for W)
   const dmsMatch = s.match(
     /^(\d+(?:\.\d+)?)°(?:(\d+(?:\.\d+)?)[′'])(?:(\d+(?:\.\d+)?)[″"])?([NSEWOnsew]?)$/
   );
@@ -117,14 +85,9 @@ function parseDMSComponent(s) {
     if (dir === "S" || dir === "W" || dir === "O") v = -v;
     return v;
   }
-
   return null;
 }
 
-/**
- * Parse a "lat, lon" string where each component may be decimal or DMS.
- * Returns { lat, lon } or null.
- */
 function parseCoordsString(s) {
   if (!s) return null;
   const comma = s.indexOf(",");
@@ -137,10 +100,6 @@ function parseCoordsString(s) {
 
 // ─── wikitext mining ──────────────────────────────────────────────────────────
 
-/**
- * Extract all {{coord|...}} inner strings from wikitext.
- * Returns an array (may be empty).
- */
 function getCoordTemplates(wikitext) {
   const results = [];
   const re = /\{\{[Cc]oord\|([^}]+)\}\}/g;
@@ -151,10 +110,6 @@ function getCoordTemplates(wikitext) {
   return results;
 }
 
-/**
- * Parse infobox pipe fields into a flat key→value map.
- * Handles:  | latitude = 51.5074
- */
 function parseInfoboxFields(wikitext) {
   const fields = {};
   for (const line of wikitext.split("\n")) {
@@ -171,12 +126,37 @@ function parseInfoboxFields(wikitext) {
 
 // ─── fetch helpers ─────────────────────────────────────────────────────────────
 
-async function fetchJSON(url) {
-  const res = await fetch(url);
+const MAX_RETRIES = 3;
+
+// Authorization header for Wikimedia API — gives higher rate limits.
+// Falls back gracefully to unauthenticated if the env var is not set.
+function wikimediaAuthHeader() {
+  const token = process.env.WIKIMEDIA_ACCESS_TOKEN;
+  return token ? { "Authorization": `Bearer ${token}` } : {};
+}
+
+// Fetches JSON, honouring Retry-After on 429 and retrying automatically.
+async function fetchJSON(url, { retries = MAX_RETRIES, auth = false } = {}) {
+  const headers = auth ? wikimediaAuthHeader() : {};
+  const res = await fetch(url, { headers });
+
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get("retry-after") ?? "30", 10);
+    const waitSecs = isNaN(retryAfter) ? 30 : Math.min(retryAfter + 2, 120);
+    if (retries <= 0) {
+      console.warn(`  HTTP 429 for ${url} — no retries left, skipping`);
+      return null;
+    }
+    console.warn(`  HTTP 429 — waiting ${waitSecs}s then retrying (${retries} retries left)…`);
+    await new Promise(r => setTimeout(r, waitSecs * 1000));
+    return fetchJSON(url, { retries: retries - 1, auth });
+  }
+
   if (!res.ok) {
-    if (res.status === 429) throw Object.assign(new Error("Rate limited"), { rateLimited: true });
+    console.warn(`  HTTP ${res.status} for ${url}`);
     return null;
   }
+
   return res.json();
 }
 
@@ -189,29 +169,24 @@ async function fetchText(url) {
 // ─── Wikimedia REST API ────────────────────────────────────────────────────────
 
 function wikiApiUrl(link) {
-  // e.g. https://en.wikipedia.org/wiki/Paris  →  en, Paris
   const afterSlashes = link.replace(/^https?:\/\//, "");
   const parts = afterSlashes.split("/");
-  const host = parts[0];                          // en.wikipedia.org
-  const page = parts[parts.length - 1];           // Paris
-  const language = host.split(".")[0];            // en
+  const host = parts[0];
+  const page = parts[parts.length - 1];
+  const language = host.split(".")[0];
   return `https://api.wikimedia.org/core/v1/wikipedia/${language}/page/${page}`;
 }
 
 async function loadWikipediaContent(link) {
   const url = wikiApiUrl(link);
-  const json = await fetchJSON(url).catch(err => {
-    if (err.rateLimited) throw err;
-    return null;
-  });
+  const json = await fetchJSON(url, { auth: true }); // authenticated request
   if (!json) return null;
   if (json.errorKey) {
-    console.warn(`Wikipedia API error for ${link}: ${json.errorKey}`);
+    console.warn(`  Wikipedia API errorKey "${json.errorKey}" for ${link}`);
     return null;
   }
   const source = json.source;
   if (!source) return null;
-  // Mask coord|qid= so it doesn't confuse the coord extractor (mirrors Swift)
   return source.replace(/\{\{coord\|qid=/gi, "{{xxxxx|qid=");
 }
 
@@ -229,13 +204,11 @@ async function fetchWikidataCoords(entityId) {
 }
 
 async function wikidataSearchByTitle(link) {
-  // Derive the page title from the Wikipedia URL
   const afterSlashes = link.replace(/^https?:\/\//, "");
   const parts = afterSlashes.split("/");
   const host = parts[0];
   const page = decodeURIComponent(parts[parts.length - 1]).replace(/_/g, " ");
   const language = host.split(".")[0];
-
   const url = `https://www.wikidata.org/w/api.php?action=wbsearchentities&format=json&search=${encodeURIComponent(page)}&language=${language}&origin=*`;
   const json = await fetchJSON(url);
   const id = json?.search?.[0]?.id;
@@ -260,7 +233,9 @@ function coordsFromAirbnb(html) {
 
 // ─── Main entry point ──────────────────────────────────────────────────────────
 
-const INTER_REQUEST_DELAY_MS = 1_000;  // pause between Wikipedia fetches
+// With authentication, Wikimedia allows much higher request rates.
+// 1 second between requests should be safe; the retry logic handles any 429s.
+const INTER_REQUEST_DELAY_MS = 1_000;
 
 let lastWikipediaFetch = 0;
 
@@ -274,19 +249,6 @@ async function throttledWikipediaFetch(url) {
   return loadWikipediaContent(url);
 }
 
-/**
- * Fetch coordinates from a URL.
- *
- * Supports:
- *   - https://en.wikipedia.org/wiki/*   (or any language)
- *   - https://www.booking.com/*
- *   - https://www.airbnb.com/*
- *
- * @param {string} url
- * @param {object} options
- * @param {string} [options.list]  list key (used for rivers special-case)
- * @returns {Promise<{coords: string, location: object}|null>}
- */
 export async function getCoordsFromUrl(url, { list = "" } = {}) {
   const host = new URL(url).hostname;
 
@@ -314,19 +276,9 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
     return null;
   }
 
-  let content;
-  try {
-    content = await throttledWikipediaFetch(url);
-  } catch (err) {
-    if (err.rateLimited) {
-      console.warn(`Rate limited on ${url} — aborting Wikipedia requests.`);
-      throw err; // re-throw so callers can set wikiBlocked
-    }
-    return null;
-  }
+  const content = await throttledWikipediaFetch(url);
 
   if (!content) {
-    // Try percent-encoding if the URL has non-ASCII chars
     if (!url.includes("%")) {
       const encoded = encodeURI(url);
       if (encoded !== url) {
@@ -351,7 +303,7 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
   // ── 2. {{coord|...}} template ────────────────────────────────────────────
   let coordTemplates = getCoordTemplates(content);
   if (list === "rivers" && coordTemplates.length === 2) {
-    coordTemplates = [coordTemplates[1]]; // rivers: prefer mouth over source
+    coordTemplates = [coordTemplates[1]];
   }
   if (coordTemplates.length > 0) {
     const parsed = parseWikiCoord(coordTemplates[0]);
@@ -363,7 +315,7 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
     }
   }
 
-  // ── 3. latitude= / longitude= infobox fields (also via getLatAndLong) ───
+  // ── 3. latitude= / longitude= infobox fields ─────────────────────────────
   const latMatch = content.match(/latitude\s*=\s*([-+]?\d*\.?\d+)/i);
   const lonMatch = content.match(/longitude\s*=\s*([-+]?\d*\.?\d+)/i);
   if (latMatch && lonMatch) {
@@ -395,12 +347,10 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
     const lonSec = parseFloat(fields["lon_sec"]) || 0;
     const latNS = fields["lat_ns"] || fields["lat_dir"] || "N";
     const lonEW = fields["lon_ew"] || fields["lon_dir"] || "E";
-
     let lat = latDeg + latMin / 60 + latSec / 3600;
     let lon = lonDeg + lonMin / 60 + lonSec / 3600;
     if (latNS.toUpperCase() === "S") lat = -lat;
     if (lonEW.toUpperCase() === "W") lon = -lon;
-
     if (!isNaN(lat) && !isNaN(lon)) {
       console.log(`Coords from lat/lon deg/min/sec fields: ${lat}, ${lon}`);
       return makeResult(lat, lon);
@@ -429,9 +379,6 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
   return null;
 }
 
-/**
- * Reset the inter-request throttle timer (useful between separate batch runs).
- */
 export function resetRateLimit() {
   lastWikipediaFetch = 0;
 }
