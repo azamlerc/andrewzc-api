@@ -118,6 +118,10 @@ GET /pages
 ```
 Returns all 342 pages with full metadata.
 
+Optional query parameters:
+
+- `dataset=roadtrip` filters pages by their `dataset` field
+
 #### Create a page
 ```
 POST /pages

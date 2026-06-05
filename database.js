@@ -46,9 +46,10 @@ export async function getPage(key) {
   return db.collection("pages").findOne({ key });
 }
 
-export async function getPages() {
+export async function getPages({ dataset = null } = {}) {
   const db = await connectToMongo();
-  return db.collection("pages").find({}).sort({ name: 1, key: 1 }).toArray();
+  const filter = dataset ? { dataset } : {};
+  return db.collection("pages").find(filter).sort({ name: 1, key: 1 }).toArray();
 }
 
 export async function createPage(payload) {

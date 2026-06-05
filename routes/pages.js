@@ -8,9 +8,11 @@ import { strip, cleanError } from "./middleware.js";
 
 export const pagesRouter = express.Router();
 
-pagesRouter.get("/", async (_req, res) => {
+pagesRouter.get("/", async (req, res) => {
+  const dataset = req.query.dataset ? String(req.query.dataset).trim() : null;
+
   try {
-    const pages = await getPages();
+    const pages = await getPages({ dataset });
     return res.json({ pages: pages.map(strip) });
   } catch (err) {
     console.error("GET /pages failed:", err);
