@@ -10,7 +10,7 @@
 // The cascade for Wikipedia pages mirrors the logic in andrewzc-v2/wiki.swift:
 //   1. Fetch wikitext via Wikimedia REST API
 //   2. Follow #REDIRECT links (once)
-//   3. {{coord|...}} template
+//   3. {{coord|...}} / {{Coordenadas|...}} / {{Coords|...}} template
 //   4. {{lat|...}} / {{long|...}} or `latitude = ` / `longitude = ` infobox fields
 //   5. German breitengrad / längengrad infobox fields
 //   6. lat_deg / lat_min / lat_sec / lon_deg / lon_min / lon_sec fields
@@ -73,8 +73,11 @@ function parseDMSComponent(s) {
     if (dir === "S" || dir === "W" || dir === "O") v = -v;
     return v;
   }
+  // Matches: 40°44′50″N  (prime U+2032, double prime U+2033)
+  // Also:    40°44'50"N  (apostrophe/quote)
+  // Also:    40°44′50″O  (Spanish Oeste)
   const dmsMatch = s.match(
-    /^(\d+(?:\.\d+)?)°(?:(\d+(?:\.\d+)?)[′'])(?:(\d+(?:\.\d+)?)[″"])?([NSEWOnsew]?)$/
+    /^(\d+(?:\.\d+)?)°(?:(\d+(?:\.\d+)?)[′\u2032'])(?:(\d+(?:\.\d+)?)[″\u2033"])?([NSEWOnsew]?)$/
   );
   if (dmsMatch) {
     const deg = parseFloat(dmsMatch[1]) || 0;
@@ -100,9 +103,11 @@ function parseCoordsString(s) {
 
 // ─── wikitext mining ──────────────────────────────────────────────────────────
 
+// Matches {{coord|...}}, {{Coordenadas|...}}, {{Coords|...}} in any case.
+// Spanish Wikipedia uses {{Coordenadas}} as the standard coord template.
 function getCoordTemplates(wikitext) {
   const results = [];
-  const re = /\{\{[Cc]oord\|([^}]+)\}\}/g;
+  const re = /\{\{(?:[Cc]oord(?:enadas|s)?)\|([^}]+)\}\}/g;
   let m;
   while ((m = re.exec(wikitext)) !== null) {
     results.push(m[1]);
@@ -128,14 +133,11 @@ function parseInfoboxFields(wikitext) {
 
 const MAX_RETRIES = 3;
 
-// Authorization header for Wikimedia API — gives higher rate limits.
-// Falls back gracefully to unauthenticated if the env var is not set.
 function wikimediaAuthHeader() {
   const token = process.env.WIKIMEDIA_ACCESS_TOKEN;
   return token ? { "Authorization": `Bearer ${token}` } : {};
 }
 
-// Fetches JSON, honouring Retry-After on 429 and retrying automatically.
 async function fetchJSON(url, { retries = MAX_RETRIES, auth = false } = {}) {
   const headers = auth ? wikimediaAuthHeader() : {};
   const res = await fetch(url, { headers });
@@ -177,9 +179,19 @@ function wikiApiUrl(link) {
   return `https://api.wikimedia.org/core/v1/wikipedia/${language}/page/${page}`;
 }
 
+// Extract the base URL (scheme + host) from a Wikipedia link for redirect following.
+function wikiBaseUrl(link) {
+  try {
+    const u = new URL(link);
+    return `${u.protocol}//${u.host}`;
+  } catch (_) {
+    return "https://en.wikipedia.org";
+  }
+}
+
 async function loadWikipediaContent(link) {
   const url = wikiApiUrl(link);
-  const json = await fetchJSON(url, { auth: true }); // authenticated request
+  const json = await fetchJSON(url, { auth: true });
   if (!json) return null;
   if (json.errorKey) {
     console.warn(`  Wikipedia API errorKey "${json.errorKey}" for ${link}`);
@@ -233,8 +245,6 @@ function coordsFromAirbnb(html) {
 
 // ─── Main entry point ──────────────────────────────────────────────────────────
 
-// With authentication, Wikimedia allows much higher request rates.
-// 1 second between requests should be safe; the retry logic handles any 429s.
 const INTER_REQUEST_DELAY_MS = 1_000;
 
 let lastWikipediaFetch = 0;
@@ -291,16 +301,17 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
   }
 
   // ── 1. Follow redirects ──────────────────────────────────────────────────
+  // Preserve the source language — a redirect on es.wikipedia stays on es.wikipedia
   const redirectMatch = content.match(/^#[Rr][Ee][Dd][Ii][Rr][Ee][Cc][Tt]\s+\[\[([^\]]+)\]\]/m);
   if (redirectMatch) {
     const newName = redirectMatch[1];
     console.log(`Redirect → ${newName}`);
-    const redirectUrl = "https://en.wikipedia.org/wiki/" +
-      encodeURIComponent(newName.replace(/ /g, "_"));
+    const base = wikiBaseUrl(url);
+    const redirectUrl = `${base}/wiki/${encodeURIComponent(newName.replace(/ /g, "_"))}`;
     if (redirectUrl !== url) return getCoordsFromUrl(redirectUrl, { list });
   }
 
-  // ── 2. {{coord|...}} template ────────────────────────────────────────────
+  // ── 2. {{coord|...}} / {{Coordenadas|...}} / {{Coords|...}} template ─────
   let coordTemplates = getCoordTemplates(content);
   if (list === "rivers" && coordTemplates.length === 2) {
     coordTemplates = [coordTemplates[1]];
@@ -308,7 +319,7 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
   if (coordTemplates.length > 0) {
     const parsed = parseWikiCoord(coordTemplates[0]);
     if (parsed) {
-      console.log(`Coords from {{coord}}: ${parsed.lat}, ${parsed.lon}`);
+      console.log(`Coords from coord template: ${parsed.lat}, ${parsed.lon}`);
       return makeResult(parsed.lat, parsed.lon);
     } else {
       console.warn(`Could not parse coord template: ${coordTemplates[0]}`);
