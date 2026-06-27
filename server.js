@@ -12,6 +12,7 @@ import { chatRouter, preloadChats } from "./routes/chat.js";
 import { agentsRouter } from "./routes/agents.js";
 import { imagineRouter } from "./routes/imagine.js";
 import { animalsRouter } from "./routes/animals.js";
+import { resumeRouter } from "./routes/resume.js";
 import { initScheduler } from "./agents/scheduler.js";
 
 dotenv.config();
@@ -53,6 +54,7 @@ app.use("/pages",    pagesRouter);
 app.use("/entities", entitiesRouter);
 app.use("/imagine",  imagineRouter);
 app.use("/animals",  animalsRouter);
+app.use("/resume",   resumeRouter);
 app.use("/",         lookupRouter);   // /flags, /countries, /cities, /trips, /artists, /search, /coords, /wiki
 app.use("/chat",     chatRouter);
 app.use("/agents",   requireAdminSession, agentsRouter);

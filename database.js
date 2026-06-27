@@ -1151,7 +1151,42 @@ export async function deleteImagineImage(promptId, model, style) {
   return result?.value ?? result ?? null;
 }
 
-// ---- Animals ----
+// ---- Resume ----
+
+// Returns the base resume entries, optionally merged with a named patch set.
+// Base entries have no `custom` field. Patch entries have `custom: ["name", ...]`.
+// Patches are merged by company name, with patch fields overwriting base fields.
+export async function getResume(custom = null) {
+  const db = await connectToMongo();
+  const col = db.collection("resume");
+
+  // Always fetch base entries (no custom field), preserving insertion order
+  const base = await col
+    .find({ custom: { $exists: false } })
+    .project({ _id: 0 })
+    .sort({ years: -1 })
+    .toArray();
+
+  if (!custom) return base;
+
+  // Fetch patches for the requested custom name
+  const patches = await col
+    .find({ custom })
+    .project({ _id: 0, custom: 0 })
+    .toArray();
+
+  if (patches.length === 0) return base;
+
+  // Index patches by company for O(1) lookup
+  const patchByCompany = new Map(patches.map(p => [p.company, p]));
+
+  // Merge: spread base entry then overwrite with patch fields
+  return base.map(entry => {
+    const patch = patchByCompany.get(entry.company);
+    return patch ? { ...entry, ...patch } : entry;
+  });
+}
+
 
 // Returns image records for animals, optionally filtered by artistId and/or style.
 export async function getAnimalsImages({ artistId, style } = {}) {
