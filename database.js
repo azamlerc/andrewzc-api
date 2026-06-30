@@ -1187,6 +1187,15 @@ export async function getResume(custom = null) {
   });
 }
 
+export async function getPortfolioProjects() {
+  const db = await connectToMongo();
+  return db.collection("portfolio")
+    .find({})
+    .project({ _id: 0 })
+    .sort({ year: -1, name: 1, key: 1 })
+    .toArray();
+}
+
 
 // Returns image records for animals, optionally filtered by artistId and/or style.
 export async function getAnimalsImages({ artistId, style } = {}) {

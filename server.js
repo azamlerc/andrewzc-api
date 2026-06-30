@@ -13,6 +13,7 @@ import { agentsRouter } from "./routes/agents.js";
 import { imagineRouter } from "./routes/imagine.js";
 import { animalsRouter } from "./routes/animals.js";
 import { resumeRouter } from "./routes/resume.js";
+import { portfolioRouter } from "./routes/portfolio.js";
 import { initScheduler } from "./agents/scheduler.js";
 
 dotenv.config();
@@ -55,6 +56,7 @@ app.use("/entities", entitiesRouter);
 app.use("/imagine",  imagineRouter);
 app.use("/animals",  animalsRouter);
 app.use("/resume",   resumeRouter);
+app.use("/portfolio", portfolioRouter);
 app.use("/",         lookupRouter);   // /flags, /countries, /cities, /trips, /artists, /search, /coords, /wiki
 app.use("/chat",     chatRouter);
 app.use("/agents",   requireAdminSession, agentsRouter);
@@ -112,6 +114,7 @@ app.get("/", (_req, res) => {
     "GET  /imagine/images?model=&style=",
     "GET  /animals/artists",
     "GET  /animals/images?artist=&style=",
+    "GET  /portfolio",
   ].join("\n"));
 });
 
