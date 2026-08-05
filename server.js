@@ -87,6 +87,7 @@ app.get("/", (_req, res) => {
     "GET  /entities?search=&list=&limit=",
     "POST /entities/bingo",
     "GET  /entities/nearby?lat=&lon=&radius=&list=&limit=",
+    "GET  /entities/recent?days=&list=&limit=",
     "GET  /entities/:list/props?filter=&sortBy=&sortDir=&limit=",
     "GET  /entities/:list/:key",
     "GET  /entities/:list/:key/nearby?radius=&limit=",

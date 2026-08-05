@@ -329,6 +329,18 @@ Same as above but uses the coordinates of an existing entity as the center point
 
 - [/entities/metros/paris-metro/nearby?radius=30](https://api.andrewzc.net/entities/metros/paris-metro/nearby?radius=30)
 
+#### Recent visits
+```
+GET /entities/recent[?days=<n>][&list=<key>][&limit=<n>]
+```
+Finds entities with a `dateVisited` on or after the cutoff date computed from today minus `days`. Default: 30 days. Because `dateVisited` is stored as `YYYY-MM-DD`, the API can filter alphabetically using `$gte` against that cutoff string and then sort newest-first by `dateVisited`.
+
+On Wednesday, August 5, 2026, the default 30-day cutoff is `2026-07-06`.
+
+- [/entities/recent](https://api.andrewzc.net/entities/recent) — visited in the last 30 days
+- [/entities/recent?days=7](https://api.andrewzc.net/entities/recent?days=7) — visited in the last 7 days
+- [/entities/recent?days=14&list=swimming](https://api.andrewzc.net/entities/recent?days=14&list=swimming) — recent visits from one list
+
 ---
 
 ### Country and City Groupings

@@ -27,6 +27,7 @@ export async function ensureIndexes() {
   await db.collection("entities").createIndex({ list: 1, countries: 1 });
   await db.collection("entities").createIndex({ list: 1, state: 1 });
   await db.collection("entities").createIndex({ list: 1, states: 1 });
+  await db.collection("entities").createIndex({ dateVisited: 1, list: 1 });
 
 	// Agent collections
 	await db.collection("agent_runs").createIndex({ agent: 1, ts: -1 });
@@ -683,6 +684,25 @@ export async function getEntitiesNearEntity(list, key, { radiusKm = 50, limit = 
   // Filter out the source entity itself
   const filtered = results.filter(r => !(r.list === list && r.key === key)).slice(0, limit);
   return { results: filtered, source: { lon, lat } };
+}
+
+export async function getRecentEntities({ days = 30, listFilter = null, limit = 100 } = {}) {
+  const db = await connectToMongo();
+  const cutoffDate = new Date();
+  cutoffDate.setUTCHours(0, 0, 0, 0);
+  cutoffDate.setUTCDate(cutoffDate.getUTCDate() - days);
+  const cutoff = cutoffDate.toISOString().slice(0, 10);
+
+  const filter = { dateVisited: { $gte: cutoff } };
+  if (listFilter) filter.list = listFilter;
+
+  const results = await db.collection("entities")
+    .find(filter)
+    .sort({ dateVisited: -1, name: 1, key: 1 })
+    .limit(limit)
+    .toArray();
+
+  return { cutoff, results };
 }
 
 // ---- Name search ----

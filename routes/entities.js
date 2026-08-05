@@ -6,7 +6,7 @@ import express from "express";
 import {
   getEntity, createEntity, updateEntity, enrichEntity, appendEntityImages, deleteEntity,
   getBingoEntities,
-  getEntitiesNearPoint, getEntitiesNearEntity,
+  getEntitiesNearPoint, getEntitiesNearEntity, getRecentEntities,
   searchByName, queryByProps,
   searchByVector, getSimilarEntities, embedText,
 } from "../database.js";
@@ -113,6 +113,28 @@ entitiesRouter.get("/nearby", async (req, res) => {
     return res.json({ lat, lon, radiusKm, results: results.map(strip) });
   } catch (err) {
     console.error("GET /entities/nearby failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+// ---- Date: recent visits ----
+
+entitiesRouter.get("/recent", async (req, res) => {
+  const daysRaw    = req.query.days;
+  const daysParsed = daysRaw == null ? 30 : parseInt(daysRaw, 10);
+  const days       = Number.isFinite(daysParsed) ? daysParsed : NaN;
+  const listFilter = req.query.list ? String(req.query.list) : null;
+  const limit      = Math.min(parseInt(req.query.limit) || 100, 200);
+
+  if (!Number.isFinite(days) || days < 0) {
+    return res.status(400).json({ error: "bad_request", message: "Missing or invalid ?days=" });
+  }
+
+  try {
+    const { cutoff, results } = await getRecentEntities({ days, listFilter, limit });
+    return res.json({ days, cutoff, results: results.map(strip) });
+  } catch (err) {
+    console.error("GET /entities/recent failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
