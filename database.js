@@ -27,7 +27,13 @@ export async function ensureIndexes() {
   await db.collection("entities").createIndex({ list: 1, countries: 1 });
   await db.collection("entities").createIndex({ list: 1, state: 1 });
   await db.collection("entities").createIndex({ list: 1, states: 1 });
-  await db.collection("entities").createIndex({ dateVisited: 1, list: 1 });
+  await db.collection("entities").createIndex(
+    { dateVisited: -1, name: 1, key: 1 },
+    {
+      name: "recent_entities_by_date",
+      partialFilterExpression: { dateVisited: { $type: "string" } },
+    }
+  );
 
 	// Agent collections
 	await db.collection("agent_runs").createIndex({ agent: 1, ts: -1 });
