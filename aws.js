@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const AWS_REGION = process.env.AWS_REGION || "us-east-1";
@@ -70,4 +70,24 @@ export async function presignImageUploadPair(list, filename) {
     originalUploadUrl,
     thumbUploadUrl,
   };
+}
+
+// Read one entity image back out of the bucket as bytes.
+// `thumb` selects the /tn/ variant. Returns null when the object is absent,
+// so a stale filename in an entity's images array degrades to a gap rather
+// than an error.
+export async function getImageObject(list, filename, { thumb = true } = {}) {
+  if (!imageUploadsConfigured()) throw new Error("S3 not configured");
+
+  const { originalKey, thumbKey } = imageObjectKeys(list, filename);
+  const Key = thumb ? thumbKey : originalKey;
+
+  try {
+    const out = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key }));
+    const bytes = Buffer.from(await out.Body.transformToByteArray());
+    return { key: Key, bytes, contentType: out.ContentType || "image/jpeg" };
+  } catch (err) {
+    if (err?.name === "NoSuchKey" || err?.$metadata?.httpStatusCode === 404) return null;
+    throw err;
+  }
 }
