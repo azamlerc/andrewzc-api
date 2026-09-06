@@ -7,6 +7,20 @@ const S3_BUCKET = process.env.S3_BUCKET;
 const s3 = S3_BUCKET ? new S3Client({ region: AWS_REGION }) : null;
 const IMAGE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
+// Single source of truth for how entity images are encoded.
+//
+// The resize itself necessarily has several implementations — canvas in the
+// browser, sharp in the v4 commands, sharp again in whatever client is holding
+// the file — because they run in different runtimes. The *parameters* do not
+// need to be duplicated, and duplicating them is how image-upload.js and
+// photos-import-album.js ended up as two hand-written copies of the same
+// twelve lines. Clients should read these rather than hardcode them.
+export const IMAGE_SPEC = {
+  rotate: true,                                    // honour EXIF orientation
+  original: { quality: 90, mozjpeg: true },
+  thumb: { width: 600, height: 600, fit: "cover", position: "centre", quality: 85, mozjpeg: true },
+};
+
 export function imageUploadsConfigured() {
   return !!(s3 && S3_BUCKET);
 }

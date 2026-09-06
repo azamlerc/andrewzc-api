@@ -6,9 +6,15 @@
 // his phone. Most of the useful cases are in the field, which is exactly when
 // a desktop-bound connector is unavailable.
 //
-// Two tools:
-//   entity_thumbnails(list, key)          every thumbnail for one entity
-//   entity_image(list, key, filename)     one full-size image
+// Four tools:
+//   entity_thumbnails(list, key)                 every thumbnail for one entity
+//   entity_image(list, key, filename)            one full-size image
+//   image_upload_begin(list, key, count)         allocate presigned upload targets
+//   image_upload_complete(list, key, filenames)  record them against the entity
+//
+// No image bytes pass through this server in either direction beyond the reads,
+// and none pass through the conversation at all. Uploads go client → S3 directly
+// on presigned URLs, exactly as edit.html and the v4 CLI already do.
 //
 // Thumbnails are the default because base64 image data is expensive in an
 // assistant's context — a handful of full-size JPEGs would crowd out the work
@@ -24,8 +30,12 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
-import { getEntity } from "../database.js";
-import { getImageObject, imageUploadsConfigured } from "../aws.js";
+import { getEntity, appendEntityImages } from "../database.js";
+import {
+  getImageObject, imageUploadsConfigured, presignImageUploadPair,
+  nextImageIndex, imageFilenameForEntity, isValidEntityImageFilename,
+  IMAGE_SPEC,
+} from "../aws.js";
 
 export const mcpRouter = express.Router();
 
@@ -175,6 +185,82 @@ function buildServer() {
         ],
         isError: false,
       };
+    }
+  );
+
+  // ---- Writes ----------------------------------------------------------------
+  // Deliberately two steps with the bytes going nowhere near this server.
+  // begin hands out presigned URLs, the caller resizes and PUTs straight to S3,
+  // complete records the filenames. Same contract edit.html and the v4 CLI use,
+  // so nothing here is a new pathway — it is the existing one with a third client.
+
+  server.registerTool(
+    "image_upload_begin",
+    {
+      title: "Begin an image upload",
+      description:
+        "Allocate upload targets for photographs to be attached to an entity. Returns one filename " +
+        "and two presigned S3 URLs per image (original and thumbnail), plus the encoding spec to " +
+        "resize with. The caller does the resizing and the PUTs; image bytes never pass through the " +
+        "server or through the conversation. Follow with image_upload_complete once both PUTs succeed " +
+        "for a filename — an image that is uploaded but never completed stays invisible to the site.",
+      inputSchema: {
+        list:  z.string().describe("Page key the entity belongs to."),
+        key:   z.string().describe("Entity key."),
+        count: z.number().int().min(1).max(20).default(1).describe("How many images to allocate."),
+      },
+    },
+    async ({ list, key, count = 1 }) => {
+      if (!imageUploadsConfigured()) return fail("S3 is not configured on this server.");
+
+      const entity = await getEntity(list, key);
+      if (!entity) return fail(`No entity "${key}" on the ${list} list. Check the key before uploading — an image filed against the wrong entity is tedious to unpick.`);
+
+      let index = nextImageIndex(entity);
+      const uploads = [];
+      for (let i = 0; i < count; i += 1) {
+        uploads.push(await presignImageUploadPair(list, imageFilenameForEntity(entity, index++)));
+      }
+
+      const existing = Array.isArray(entity.images) ? entity.images.length : 0;
+      return text(JSON.stringify({
+        entity: { list, key, name: entity.name, existingImages: existing },
+        spec: IMAGE_SPEC,
+        uploads: uploads.map(u => ({
+          filename: u.filename,
+          originalUploadUrl: u.originalUploadUrl,
+          thumbUploadUrl: u.thumbUploadUrl,
+        })),
+        note: "PUT the full-size JPEG to originalUploadUrl and the thumbnail to thumbUploadUrl, both with Content-Type: image/jpeg. URLs expire in 5 minutes.",
+      }, null, 2));
+    }
+  );
+
+  server.registerTool(
+    "image_upload_complete",
+    {
+      title: "Complete an image upload",
+      description:
+        "Record uploaded filenames against the entity, making them visible on the site. Only call this " +
+        "after both the original and thumbnail PUTs have succeeded for each filename.",
+      inputSchema: {
+        list:      z.string().describe("Page key."),
+        key:       z.string().describe("Entity key."),
+        filenames: z.array(z.string()).min(1).describe("Filenames returned by image_upload_begin."),
+      },
+    },
+    async ({ list, key, filenames }) => {
+      const clean = Array.from(new Set(filenames.map(n => String(n || "").trim()).filter(Boolean)));
+      if (clean.length === 0) return fail("No filenames given.");
+
+      const bad = clean.filter(n => !isValidEntityImageFilename(key, n));
+      if (bad.length) return fail(`These do not match the "${key}" naming pattern: ${bad.join(", ")}. Only filenames from image_upload_begin are accepted.`);
+
+      const doc = await appendEntityImages(list, key, clean);
+      if (!doc) return fail(`No entity "${key}" on the ${list} list.`);
+
+      const all = Array.isArray(doc.images) ? doc.images : [];
+      return text(`Added ${clean.join(", ")} to ${doc.name || key} (${list}). It now has ${all.length} image${all.length === 1 ? "" : "s"}: ${all.join(", ")}`);
     }
   );
 
