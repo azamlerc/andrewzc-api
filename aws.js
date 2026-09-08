@@ -4,7 +4,14 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 const AWS_REGION = process.env.AWS_REGION || "us-east-1";
 const S3_BUCKET = process.env.S3_BUCKET;
 
-const s3 = S3_BUCKET ? new S3Client({ region: AWS_REGION }) : null;
+// requestChecksumCalculation must be WHEN_REQUIRED for presigned PUTs. The SDK
+// otherwise computes a CRC32 at presign time, when there is no body yet, and
+// hoists x-amz-checksum-crc32=AAAAAA== (the CRC32 of empty content) into the
+// signed query string. S3 then validates the uploaded bytes against it and
+// rejects any real payload.
+const s3 = S3_BUCKET
+  ? new S3Client({ region: AWS_REGION, requestChecksumCalculation: "WHEN_REQUIRED" })
+  : null;
 const IMAGE_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 // Single source of truth for how entity images are encoded.
