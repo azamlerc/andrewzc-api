@@ -369,7 +369,9 @@ The city key is the display name lowercased and hyphenated. US/Canadian cities m
 ```
 GET /trips/:key
 ```
-Returns the page document for that trip key from `pages`, plus all entities whose `trips` array contains the same key.
+Returns `{ page, entities }` using the trip page's optional `include` and `exclude` criteria. Criteria are unions: `countries: ["lu", "ch"]` matches `country` or `countries` (codes normalized to uppercase), `cities: ["aachen"]` matches city names using the same key conversion as `/cities/:key`, and `lists: { airports: ["brussels"] }` matches entity keys within that list. A list value of `true` matches the entire list.
+
+The result is `(include minus exclude) union entities tagged with trips: key`, so explicit trip tags override exclusions. Missing or empty include criteria preserve the original tagged-only behavior. Results contain each entity once, sorted by name then key, with no search-result limit.
 
 - [/trips/europe-2022](https://api.andrewzc.net/trips/europe-2022)
 

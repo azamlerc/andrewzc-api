@@ -4,6 +4,7 @@
 import { MongoClient } from "mongodb";
 import OpenAI from "openai";
 import { makeKeyFromPageTags, simplify } from "./utils.js";
+import { buildTripEntityFilter } from "./trips.js";
 
 let client;
 let db;
@@ -613,13 +614,11 @@ export async function getEntitiesByCity(city) {
 
 export async function getEntitiesByTrip(key) {
   const db = await connectToMongo();
-  const [page, entities] = await Promise.all([
-    db.collection("pages").findOne({ key }),
-    db.collection("entities")
-      .find({ trips: key })
-      .sort({ name: 1, key: 1 })
-      .toArray(),
-  ]);
+  const page = await db.collection("pages").findOne({ key });
+  const entities = await db.collection("entities")
+    .find(buildTripEntityFilter(key, page))
+    .sort({ name: 1, key: 1 })
+    .toArray();
 
   return { page, entities };
 }
