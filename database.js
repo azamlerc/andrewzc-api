@@ -612,6 +612,28 @@ export async function getEntitiesByCity(city) {
   return { city: cityDoc, entities };
 }
 
+// Resolve endpoints independently of page membership, using list AND key.
+export async function getMapRoutes({ mode = null, trip = null } = {}) {
+  const db = await connectToMongo();
+  const filter = {};
+  if (mode) filter.mode = mode;
+  if (trip) filter.trips = trip;
+  const routes = await db.collection("routes").find(filter).sort({ name: 1, key: 1 }).toArray();
+  const refs = new Map();
+  for (const route of routes) {
+    for (const stop of Array.isArray(route.stops) ? route.stops : []) {
+      if (typeof stop?.list === "string" && typeof stop?.key === "string") {
+        refs.set(JSON.stringify([stop.list, stop.key]), { list: stop.list, key: stop.key });
+      }
+    }
+  }
+  const entities = refs.size ? await db.collection("entities").find(
+    { $or: [...refs.values()] },
+    { projection: { _id: 0, list: 1, key: 1, name: 1, location: 1, coords: 1 } }
+  ).toArray() : [];
+  return { routes, entities };
+}
+
 export async function getEntitiesByTrip(key) {
   const db = await connectToMongo();
   const page = await db.collection("pages").findOne({ key });

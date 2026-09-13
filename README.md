@@ -366,6 +366,8 @@ The city key is the display name lowercased and hyphenated. US/Canadian cities m
 - [/cities/den-haag](https://api.andrewzc.net/cities/den-haag)
 
 #### All entities associated with a trip
+Route maps use `GET /routes?mode=air` for all air routes or `GET /routes?trip=<key>` for a trip's explicitly tagged routes. Filters can be combined. The response is `{ routes, entities }`, with all referenced endpoint entities resolved by `list` and `key`, independently of page entity filters. Results are unlimited; endpoint records include name and coordinates. Shared frontend `map-routes.js` draws green travelled and red planned routes, solid for air, long dashed for rail, and dotted for road/bus. Air great circles wrap across the antimeridian; rail/road paths currently connect stops schematically.
+
 ```
 GET /trips/:key
 ```

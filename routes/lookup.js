@@ -6,6 +6,7 @@
 import express from "express";
 import {
   getFlagsData,
+  getMapRoutes,
   getEntitiesByCountry, getEntitiesByCity, getEntitiesByTrip, getEntitiesByArtist,
 } from "../database.js";
 import { cityKeyToDisplayName } from "../utils.js";
@@ -14,6 +15,21 @@ import { getCoordsFromUrl } from "../wiki.js";
 import { strip, cleanError } from "./middleware.js";
 
 export const lookupRouter = express.Router();
+
+lookupRouter.get("/routes", async (req, res) => {
+  const mode = typeof req.query.mode === "string" ? req.query.mode.trim() : null;
+  const trip = typeof req.query.trip === "string" ? req.query.trip.trim() : null;
+  if (mode && !["air", "rail", "road", "sea"].includes(mode)) {
+    return res.status(400).json({ error: "bad_request", message: "Unknown transport mode" });
+  }
+  try {
+    const result = await getMapRoutes({ mode, trip });
+    return res.json({ routes: result.routes.map(strip), entities: result.entities.map(strip) });
+  } catch (err) {
+    console.error("GET /routes failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
 
 lookupRouter.get("/flags", async (_req, res) => {
   try {
