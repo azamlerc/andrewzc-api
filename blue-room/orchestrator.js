@@ -32,7 +32,7 @@ import {
   BlueRoomProviderError,
 } from "./providers.js";
 
-export const DEFAULT_TOTAL_TURNS = 20;
+export const DEFAULT_TOTAL_TURNS = 40;
 export const DEFAULT_PERSON_1 = "claude";
 
 const defaultStore = {

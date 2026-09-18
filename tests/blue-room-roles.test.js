@@ -67,10 +67,14 @@ test("the scenario reaches both sides unchanged; only the role line differs", ()
   assert.ok(second.system.includes(SCENARIO));
 
   // Briefs first: once names are masked the brief text no longer matches.
+  // The turn number is also legitimately per-side — the two speakers are at
+  // different points in the conversation — so normalize it too. What this
+  // asserts is that the scenario and the shared template are identical.
   const strip = text => text
     .replace(CLAUDE_BRIEF, "BRIEF").replace(OPENAI_BRIEF, "BRIEF")
     .replace(/Margit|Tomas/g, "NAME")
-    .replace(/person [12]/gi, "person N");
+    .replace(/person [12]/gi, "person N")
+    .replace(/turn \d+ of \d+/g, "turn N of M");
   assert.equal(strip(first.system), strip(second.system));
 });
 
