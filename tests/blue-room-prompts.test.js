@@ -103,35 +103,76 @@ test("metadata generation is a small separate prompt", () => {
   assert.throws(() => parseMetadata('{"title":"U2 concert","emoji":"🎸🎸"}'), { code: "invalid_metadata" });
 });
 
-// Run 3 (2026-09-18) read back zero cached tokens across all 40 messages,
-// on both providers, because the turn counter sat in the system prompt and
-// changed every turn. Caching keys on an exact prefix, so anything volatile
-// at the front invalidates the whole transcript behind it. The system prompt
-// must therefore be byte-identical for a given speaker for the whole run.
-test("the system prompt does not change between turns, so the cache prefix survives", () => {
+// Caching survives only while each request for a speaker is an exact
+// extension of its previous one. Runs 3, 4 and 5 all read back zero cached
+// tokens because a per-turn pacing note broke that property — first from
+// the system prompt, then from the final message. Runs 1 and 2, which had
+// no note, cached normally. This is the invariant, not "keep the volatile
+// text late in the request", which is what I assumed and it was wrong.
+function requestAt(session, turn) {
+  const messages = Array.from({ length: turn }, (_, index) => ({
+    turnIndex: index,
+    speaker: index % 2 === 0 ? "claude" : "openai",
+    text: `message ${index}`,
+  }));
+  return buildDialogueRequest({ session, speaker: turn % 2 === 0 ? "claude" : "openai", messages });
+}
+
+test("each request is an exact extension of the speaker's previous one", () => {
   const session = fixture();
-  session.totalMessages = 20;
-  const systems = new Set();
-  for (const turn of [0, 2, 8, 18]) {
-    const messages = Array.from({ length: turn }, (_, index) => ({
-      turnIndex: index,
-      speaker: index % 2 === 0 ? "claude" : "openai",
-      text: `message ${index}`,
-    }));
-    const request = buildDialogueRequest({ session, speaker: "claude", messages });
-    systems.add(request.system);
-    // The turn number belongs at the very end of the request instead.
-    assert.ok(request.messages.at(-1).content.includes(`turn ${turn + 1} of 20`));
+  session.totalMessages = 40;
+
+  // From turn 2 on. Claude's very first request carries the synthetic
+  // neutral cue in place of a transcript, and that cue is replaced by its
+  // real opening message afterwards, so turn 2 cannot extend turn 0. That
+  // is one unavoidable miss, on the shortest prompt of the run.
+  for (const turn of [4, 5, 10, 20, 30]) {
+    const before = requestAt(session, turn - 2);
+    const after = requestAt(session, turn);
+    assert.equal(after.system, before.system, `system prompt changed by turn ${turn}`);
+    // Everything the earlier request sent must reappear byte-identically.
+    before.messages.forEach((message, index) => {
+      assert.deepEqual(after.messages[index], message, `message ${index} changed by turn ${turn}`);
+    });
+    assert.ok(after.messages.length > before.messages.length);
   }
-  assert.equal(systems.size, 1, "the system prompt varied between turns and broke the cache");
-  assert.ok(![...systems][0].match(/turn \d+ of/), "a turn counter is still in the cached prefix");
+});
+
+test("no pacing note until the conversation is near its end", () => {
+  const session = fixture();
+  session.totalMessages = 40;
+
+  for (const turn of [1, 2, 10, 30, 34]) {
+    assert.ok(!requestAt(session, turn - 1).messages.at(-1).content.includes("Pacing note"),
+      `turn ${turn} carried a pacing note and will miss the cache`);
+  }
+  // The last few messages get it, and the very last is told so explicitly.
+  assert.ok(requestAt(session, 36).messages.at(-1).content.includes("turn 37 of 40"));
+  assert.ok(requestAt(session, 39).messages.at(-1).content.includes("This is your final message"));
+});
+
+test("the turn budget never reaches the cached prefix", () => {
+  const session = fixture();
+  session.totalMessages = 40;
+  for (const turn of [0, 10, 39]) {
+    const request = requestAt(session, turn);
+    assert.ok(!/turn \d+ of/.test(request.system), "a turn counter is in the cached prefix");
+    assert.ok(!request.system.includes("of 40"));
+  }
 });
 
 test("the pacing note is marked as out of band and asks not to be quoted", () => {
-  const request = buildDialogueRequest({ session: fixture(), speaker: "claude", messages: [] });
-  const note = request.messages.at(-1).content;
+  const session = fixture();
+  session.totalMessages = 40;
+  const note = requestAt(session, 39).messages.at(-1).content;
   assert.ok(note.includes("not part of the conversation"));
   assert.ok(note.includes("Do not mention or reply to this note."));
-  // The other side must not learn the budget from the visible transcript.
-  assert.ok(!request.system.includes("of 20"));
+});
+
+// The one documented exception to the rule above.
+test("only the opening turn fails to extend, because of the neutral cue", () => {
+  const session = fixture();
+  session.totalMessages = 40;
+  assert.equal(requestAt(session, 0).messages[0].content, NEUTRAL_OPENER);
+  assert.equal(requestAt(session, 2).messages[0].content, "message 0");
 });
