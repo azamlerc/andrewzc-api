@@ -45,6 +45,9 @@ export async function ensureIndexes() {
 	await db.collection("data_source_cache").createIndex({ source: 1, cacheKey: 1 }, { unique: true });
 	await db.collection("feedback").createIndex({ entityKey: 1 });
 	await db.collection("feedback").createIndex({ list: 1, decidedAt: -1 });
+
+	const { ensureBlueRoomIndexes } = await import("./blue-room/database.js");
+	await ensureBlueRoomIndexes();
 }
 
 // ---- Pages ----

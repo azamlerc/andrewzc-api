@@ -15,6 +15,7 @@ import { animalsRouter } from "./routes/animals.js";
 import { resumeRouter } from "./routes/resume.js";
 import { portfolioRouter } from "./routes/portfolio.js";
 import { mcpRouter } from "./routes/mcp.js";
+import { blueRoomRouter } from "./routes/blue-room.js";
 import { initScheduler } from "./agents/scheduler.js";
 
 dotenv.config();
@@ -59,6 +60,7 @@ app.use("/animals",  animalsRouter);
 app.use("/resume",   resumeRouter);
 app.use("/portfolio", portfolioRouter);
 app.use("/mcp", mcpRouter);
+app.use("/blue-room", blueRoomRouter);
 app.use("/",         lookupRouter);   // /flags, /countries, /cities, /trips, /artists, /search, /coords, /wiki
 app.use("/chat",     chatRouter);
 app.use("/agents",   requireAdminSession, agentsRouter);
