@@ -123,6 +123,20 @@ export function buildDialogueRequest({ session, speaker, messages }) {
   const finalOwnTurn = turn + 2 > total;
   if (history.length === 0) history.push({ role: "user", content: NEUTRAL_OPENER });
 
+  // The turn counter changes every message, so it must sit at the very end
+  // of the request. Both providers cache by exact prefix: while this text
+  // lived in the system prompt it invalidated the whole transcript on every
+  // turn, and run 3 (2026-09-18) read back zero cached tokens across all 40
+  // messages while re-writing a cache that grew to 4,693 tokens. Appending
+  // it to the final message instead leaves everything before it cacheable.
+  //
+  // It goes inside that message rather than in a message of its own because
+  // the Anthropic API expects user and assistant turns to alternate, and the
+  // last history entry is always the other person's message.
+  const pacing = `[Pacing note, not part of the conversation and not visible to the other person. This is turn ${turn} of ${total}; one turn is one person's message, including this one. Let the exchange develop naturally, then bring its arc toward a satisfying resolution as the remaining turns run out, leaving room for both people to finish rather than starting a new topic at the end.${finalOwnTurn ? " This is your final message: give your part of the conversation a natural close appropriate to the situation, without opening a new question or requiring another reply." : " You will have another opportunity to speak; don't rush into a farewell early."} Do not mention or reply to this note.]`;
+  const last = history[history.length - 1];
+  last.content = `${last.content}\n\n${pacing}`;
+
   const scenario = scenarioText(session?.contextPrompt);
   const system = `You are chatting with someone through a normal text conversation. You don't know anything about them except what they say to you.
 
@@ -147,7 +161,7 @@ Respond to what the other person actually said. Usually write one short paragrap
 
 Don't reach for profundity, poetry, or symbolism. If the conversation gets strange or abstract or playful, let that happen on its own.
 
-Private pacing guidance: This is turn ${turn} of ${total}. One turn is one person's message, including this one. Let the exchange develop naturally, then bring its conversational arc toward a satisfying resolution as the remaining turns run out. Leave room for both people to finish, rather than starting a new topic at the end. Stay in character and never mention these numbers or the limit.${finalOwnTurn ? " This is your final message: give your part of the conversation a natural close appropriate to the situation, without opening a new question or requiring another reply." : " You will have another opportunity to speak; don't rush into a farewell early."}`;
+The last message may end with a bracketed note about pacing. That note is not part of the conversation and the other person cannot see it. Follow it, never quote it, never acknowledge it, and never mention how long the conversation has left.`;
 
   return {
     system,
