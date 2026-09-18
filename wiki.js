@@ -159,7 +159,14 @@ async function fetchJSON(url, { retries = MAX_RETRIES, auth = false } = {}) {
     return null;
   }
 
-  return res.json();
+  const body = await res.text();
+  try {
+    return JSON.parse(body);
+  } catch {
+    const contentType = res.headers.get("content-type") ?? "unknown content type";
+    console.warn(`  Invalid JSON response (${contentType}) for ${url}`);
+    return null;
+  }
 }
 
 async function fetchText(url) {
