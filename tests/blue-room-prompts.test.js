@@ -14,6 +14,7 @@ const OPENAI_BRIEF = "I'm Tomas, a bookseller on my way to Berlin.\n\nI hope to 
 
 function fixture() {
   return {
+    totalMessages: 20,
     contextPrompt: "You are on an overnight sleeper train.",
     participants: {
       claude: { model: "claude-fable-5-1", effort: "low", roleIndex: 1, persona: { name: "Margit", brief: CLAUDE_BRIEF } },

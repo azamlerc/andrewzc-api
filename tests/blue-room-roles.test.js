@@ -23,7 +23,7 @@ function participants({ claudeRole = 1, openaiRole = 2 } = {}) {
 }
 
 function sessionFixture(overrides = {}) {
-  return { _id: "68c1f0000000000000000001", contextPrompt: SCENARIO, participants: participants(), ...overrides };
+  return { _id: "68c1f0000000000000000001", totalMessages: 20, contextPrompt: SCENARIO, participants: participants(), ...overrides };
 }
 
 // Stand-in for the sessions collection, so creation validation is testable

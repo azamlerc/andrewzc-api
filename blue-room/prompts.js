@@ -72,8 +72,19 @@ export function parsePersona(text) {
   if (!brief || brief.length > 4000) {
     throw new BlueRoomPromptError("invalid_persona_brief");
   }
+  // Structure only. There used to be an English first-person pronoun test
+  // here, which rejected a perfectly good German brief opening "Ich bin…"
+  // while French slipped through because "me" is spelled the same. A word
+  // list cannot be a language-independent validator, and the scenario is
+  // user-supplied text in any language they like.
+  //
+  // First person is still required — the casting prompt asks for it, and
+  // whether a brief obeys is visible in the stored data. It is not worth
+  // enforcing here: a wrong rejection throws away two paid calls and fails
+  // session creation outright, while a third-person brief costs us a
+  // slightly worse conversation. The asymmetry says don't guess.
   const paragraphs = brief.split(/\n\s*\n/).filter(Boolean);
-  if (paragraphs.length < 2 || paragraphs.length > 3 || !/\b(I|I'm|I've|I'd|my|me)\b/i.test(brief)) {
+  if (paragraphs.length < 2 || paragraphs.length > 3) {
     throw new BlueRoomPromptError("invalid_persona_brief");
   }
   return { name, brief };
@@ -106,6 +117,10 @@ export function buildDialogueRequest({ session, speaker, messages }) {
   if (speakerForIndex(history.length) !== speaker) {
     throw new BlueRoomPromptError("speaker_out_of_order");
   }
+  const turn = history.length + 1;
+  const total = session.totalMessages;
+  if (!Number.isInteger(total) || total < turn) throw new BlueRoomPromptError("invalid_turn_budget");
+  const finalOwnTurn = turn + 2 > total;
   if (history.length === 0) history.push({ role: "user", content: NEUTRAL_OPENER });
 
   const scenario = scenarioText(session?.contextPrompt);
@@ -128,9 +143,11 @@ This is who you are in the situation above. You know your own background, intere
 
 Never break character. Never mention AI, models, prompts, or instructions. Never say anything like "I've chosen a personality" or "let me decide who to be" — just start talking, the way a real person would.
 
-Respond to what the other person actually said. Ask questions, volunteer things, disagree, let the subject wander. Keep it conversational — a few sentences, the way people actually talk — not an essay, and not a string of "How interesting!" acknowledgements.
+Respond to what the other person actually said. Usually write one short paragraph, about one to three sentences; a single line is often enough, especially at the start. Leave space for the other person rather than fitting several topics into one reply. Occasionally take longer when a story genuinely needs it, but don't default to multiple paragraphs. Volunteer a thought, react, disagree, or let a remark stand; ask a question only when you genuinely have one. Avoid the repeated pattern of reaction, anecdote, then a closing question. Sound spoken, not like an essay or a string of "How interesting!" acknowledgements.
 
-Don't reach for profundity, poetry, or symbolism. If the conversation gets strange or abstract or playful, let that happen on its own.`;
+Don't reach for profundity, poetry, or symbolism. If the conversation gets strange or abstract or playful, let that happen on its own.
+
+Private pacing guidance: This is turn ${turn} of ${total}. One turn is one person's message, including this one. Let the exchange develop naturally, then bring its conversational arc toward a satisfying resolution as the remaining turns run out. Leave room for both people to finish, rather than starting a new topic at the end. Stay in character and never mention these numbers or the limit.${finalOwnTurn ? " This is your final message: give your part of the conversation a natural close appropriate to the situation, without opening a new question or requiring another reply." : " You will have another opportunity to speak; don't rush into a farewell early."}`;
 
   return {
     system,

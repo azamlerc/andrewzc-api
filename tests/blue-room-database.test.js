@@ -132,7 +132,7 @@ test("the message projection carries the transcript but not token usage", () => 
 });
 
 test("turn bounds are exported so routes and UI validate against one source", () => {
-  assert.equal(MIN_TURNS, 1);
-  assert.equal(MAX_TURNS, 50);
+  assert.equal(MIN_TURNS, 2);
+  assert.equal(MAX_TURNS, 100);
   assert.ok(MAX_TURNS >= 30, "the 30-turn experiment must be expressible");
 });

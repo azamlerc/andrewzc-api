@@ -15,8 +15,8 @@ const MESSAGES = "blue_room_messages";
 
 export const SIDES = ["claude", "openai"];
 
-export const MIN_TURNS = 1;
-export const MAX_TURNS = 50;
+export const MIN_TURNS = 2;
+export const MAX_TURNS = 100;
 
 const MAX_PROMPT_CHARS = 2000;
 const MAX_NAME_CHARS   = 60;
@@ -112,7 +112,7 @@ export async function createSession({ contextPrompt, totalTurns, participants, t
     emoji:  String(emoji || "").trim() || "🌀",
     contextPrompt: prompt,
     status:            "starting",
-    totalMessages:     turns * 2,
+    totalMessages:     turns,
     completedMessages: 0,
     nextTurnIndex:     0,
     turnState:         "pending",
@@ -445,7 +445,7 @@ export function publicSession(session) {
     status:            session.status,
     totalMessages:     session.totalMessages,
     completedMessages: session.completedMessages,
-    totalTurns:        session.totalMessages / 2,
+    totalTurns:        session.totalMessages,
     participants: {
       claude: {
         model:     session.participants?.claude?.model ?? null,
