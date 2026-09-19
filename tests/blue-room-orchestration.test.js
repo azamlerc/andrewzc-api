@@ -375,6 +375,7 @@ test("creation validates turn bounds before paying for personas", async () => {
 
   assert.equal((await startSession({ contextPrompt: SCENARIO, totalTurns: 999 }, { store, providers })).error, "bad_total_turns");
   assert.equal((await startSession({ contextPrompt: "  " }, { store, providers })).error, "missing_prompt");
+  assert.equal((await startSession({ contextPrompt: "x".repeat(4001) }, { store, providers })).error, "prompt_too_long");
   assert.equal((await startSession({ contextPrompt: SCENARIO, person1: "nobody" }, { store, providers })).error, "bad_person1");
   assert.equal(cast, 0, "no provider call for an input we would reject anyway");
 });

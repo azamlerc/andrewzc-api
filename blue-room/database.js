@@ -18,7 +18,7 @@ export const SIDES = ["claude", "openai"];
 export const MIN_TURNS = 2;
 export const MAX_TURNS = 100;
 
-const MAX_PROMPT_CHARS = 2000;
+export const MAX_PROMPT_CHARS = 4000;
 const MAX_NAME_CHARS   = 60;
 const MAX_BRIEF_CHARS  = 4000;
 const MAX_TEXT_CHARS   = 20000;

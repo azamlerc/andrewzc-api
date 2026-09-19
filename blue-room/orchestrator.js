@@ -13,6 +13,7 @@ import {
   SIDES,
   MIN_TURNS,
   MAX_TURNS,
+  MAX_PROMPT_CHARS,
   createSession,
   getSession,
   getMessage,
@@ -76,7 +77,9 @@ function normalizeFailure(err) {
 // same checks run again inside createSession, which is the real boundary;
 // these only exist to avoid paying for a session that cannot be stored.
 function validateCreation({ contextPrompt, totalTurns, person1 }) {
-  if (!String(contextPrompt ?? "").trim()) return "missing_prompt";
+  const prompt = String(contextPrompt ?? "").trim();
+  if (!prompt) return "missing_prompt";
+  if (prompt.length > MAX_PROMPT_CHARS) return "prompt_too_long";
   if (!Number.isInteger(totalTurns) || totalTurns < MIN_TURNS || totalTurns > MAX_TURNS) {
     return "bad_total_turns";
   }

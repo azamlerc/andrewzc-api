@@ -99,8 +99,11 @@ test("persona casting is private, first-person, and strictly validated", () => {
 test("metadata generation is a small separate prompt", () => {
   const request = buildMetadataRequest({ contextPrompt: "At a U2 concert" });
   assert.ok(request.messages[0].content.includes("At a U2 concert"));
+  assert.match(request.system, /2–5 words/);
+  assert.match(request.system, /sentence case/);
   assert.deepEqual(parseMetadata('{"title":"U2 concert","emoji":"🎸"}'), { title: "U2 concert", emoji: "🎸" });
   assert.throws(() => parseMetadata('{"title":"U2 concert","emoji":"🎸🎸"}'), { code: "invalid_metadata" });
+  assert.throws(() => parseMetadata(`{"title":"${"x".repeat(41)}","emoji":"🎸"}`), { code: "invalid_metadata" });
 });
 
 // Caching survives only while each request for a speaker is an exact
