@@ -6,11 +6,12 @@
 // his phone. Most of the useful cases are in the field, which is exactly when
 // a desktop-bound connector is unavailable.
 //
-// Four tools:
+// Five tools:
 //   entity_thumbnails(list, key)                 every thumbnail for one entity
 //   entity_image(list, key, filename)            one full-size image
 //   image_upload_begin(list, key, count)         allocate presigned upload targets
 //   image_upload_complete(list, key, filenames)  record them against the entity
+//   map_view(lat, lon, zoom, size)                a small OSM tile mosaic with a marker
 //
 // No image bytes pass through this server in either direction beyond the reads,
 // and none pass through the conversation at all. Uploads go client → S3 directly
@@ -31,6 +32,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import { getEntity, appendEntityImages } from "../database.js";
+import { renderMapView } from "../maps.js";
 import {
   getImageObject, imageUploadsConfigured, presignImageUploadPair,
   nextImageIndex, imageFilenameForEntity, isValidEntityImageFilename,
@@ -261,6 +263,54 @@ function buildServer() {
 
       const all = Array.isArray(doc.images) ? doc.images : [];
       return text(`Added ${clean.join(", ")} to ${doc.name || key} (${list}). It now has ${all.length} image${all.length === 1 ? "" : "s"}: ${all.join(", ")}`);
+    }
+  );
+
+  // ---- Map view ---------------------------------------------------------------
+  // No S3, no entity, no auth beyond the router's own bearer check — just a
+  // handful of public OSM tiles stitched together with a marker at the exact
+  // point. See maps.js for the usage-policy note.
+
+  server.registerTool(
+    "map_view",
+    {
+      title: "Map view",
+      description:
+        "Fetch a small mosaic of OpenStreetMap tiles centered on a lat/lon, with a marker at the " +
+        "exact point. Use this to actually look at a location — check what kind of intersection or " +
+        "roundabout is there, whether a coordinate lands where it should, or what the surrounding " +
+        "area looks like. Zoom follows the usual OSM slippy-map scale (0 = whole world, 19 = " +
+        "building-level); 17 is a good default for street-level features like a roundabout or a " +
+        "station.",
+      inputSchema: {
+        lat:  z.number().min(-85.05).max(85.05).describe("Latitude, decimal degrees."),
+        lon:  z.number().min(-180).max(180).describe("Longitude, decimal degrees."),
+        zoom: z.number().int().min(0).max(19).default(17).describe("OSM zoom level, 0-19."),
+        size: z.number().int().min(1).max(5).default(3).describe(
+          "Tiles per side of the mosaic (odd numbers center on the point best). " +
+          "3 = a 768x768px view; 1 = just the single tile containing the point."
+        ),
+      },
+    },
+    async ({ lat, lon, zoom = 17, size = 3 }) => {
+      let view;
+      try {
+        view = await renderMapView({ lat, lon, zoom, size });
+      } catch (err) {
+        return fail(`Could not render map view: ${err?.message || err}`);
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Map view at ${lat}, ${lon}, zoom ${zoom} (${size}x${size} tiles, marker at the ` +
+                  `requested point). Map data © OpenStreetMap contributors.`,
+          },
+          { type: "image", data: view.bytes.toString("base64"), mimeType: view.contentType },
+        ],
+        isError: false,
+      };
     }
   );
 
