@@ -36,13 +36,13 @@ const TOOLS = [
     type: "function",
     function: {
       name: "filterEntities",
-      description: "Find entities matching a MongoDB filter. Use this for queries that combine a list with a country, city, or other field — e.g. 'canals in Belgium', 'airports in Paris', 'trams in Germany'. The filter is a MongoDB query object. Common fields: list (string), country (2-letter code), countries (array of 2-letter codes), city (string).",
+      description: "Find entities matching a MongoDB filter. Use this for queries that combine one or more lists with one or more countries, cities, or other fields — e.g. 'canals in Belgium', 'airports in Paris', or 'spas, cathedrals, castles and bridges in Prague, Vienna, Bratislava and Budapest'. The filter is a MongoDB query object. Use $in arrays when the request names multiple values, such as {list: {$in: ['spas', 'cathedrals']}, city: {$in: ['Prague', 'Vienna']}}.",
       parameters: {
         type: "object",
         properties: {
           filter: {
             type: "object",
-            description: "MongoDB filter object, e.g. { \"list\": \"canals\", \"country\": \"BE\" }",
+            description: "MongoDB filter object. Use exact list keys and city names. For multiple lists or cities, use $in arrays, e.g. { \"list\": { \"$in\": [\"spas\", \"cathedrals\"] }, \"city\": { \"$in\": [\"Prague\", \"Vienna\"] } }.",
           },
           sortBy: {
             type: "string",
@@ -220,6 +220,7 @@ Guidelines:
 - For country filters use 2-letter ISO codes (BE, FR, DE, GB, US etc).
 - For city filters use the city display name as it would appear in the data (e.g. "Paris", "New York", "Den Haag").
 - Prefer filterEntities for queries that combine a list + location.
+- When a query names multiple lists or multiple locations, make one filterEntities call using $in arrays; do not make one tool call per list or location.
 - For queries asking for things near a named place (e.g. 'near the Eiffel Tower', 'near Brussels'), use findNearbyEntities with coordinates you derive from your own knowledge — do not try to look the place up in the database.
 - Prefer searchByMeaning for open-ended descriptive queries. Do NOT add a list filter to searchByMeaning unless the user explicitly names a specific list.
 - Prefer searchByName when the user is looking for something by its name.
@@ -233,15 +234,17 @@ Guidelines:
       { role: "system",  content: systemPrompt },
       { role: "user",    content: query },
     ],
-    tools:       TOOLS,
-    tool_choice: "required",
+      tools:       TOOLS,
+      tool_choice: "required",
+      parallel_tool_calls: false,
     }),
     pickEmoji(query, openai),
   ]);
 
   const message = response.choices[0].message;
 
-  // Execute all tool calls (usually just one, occasionally two)
+  // Execute the selected tool call. Multi-list queries should be represented
+  // by one Mongo filter using $in arrays, not one call per list.
   const toolCalls = message.tool_calls ?? [];
   if (toolCalls.length === 0) {
     return { query, icon, results: [], tool: null };
