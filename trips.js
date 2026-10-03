@@ -1,4 +1,4 @@
-import { cityKeyToDisplayName } from "./utils.js";
+import { cityKeyToDisplayName, simplify } from "./utils.js";
 
 function strings(value) {
   return Array.isArray(value)
@@ -7,14 +7,21 @@ function strings(value) {
 }
 
 // Each criterion contributes to a union; list arrays contain entity keys.
-export function tripCriteriaClauses(criteria) {
+export function tripCriteriaClauses(criteria, storedCities = []) {
   if (!criteria || typeof criteria !== "object" || Array.isArray(criteria)) return [];
   const clauses = [];
   const countries = strings(criteria.countries).map(code => code.toUpperCase());
   if (countries.length) {
     clauses.push({ country: { $in: countries } }, { countries: { $in: countries } });
   }
-  const cities = strings(criteria.cities).map(cityKeyToDisplayName).filter(Boolean);
+  const cityKeys = strings(criteria.cities);
+  const normalizedKeys = new Set(cityKeys.map(simplify));
+  // Resolve keys such as "durres" to every matching stored spelling ("Durrës").
+  // Keep exact-name fallbacks for cities that have no entities yet.
+  const cities = [...new Set([
+    ...cityKeys.map(cityKeyToDisplayName).filter(Boolean),
+    ...strings(storedCities).filter(city => normalizedKeys.has(simplify(city))),
+  ])];
   if (cities.length) clauses.push({ city: { $in: cities } });
   if (criteria.lists && typeof criteria.lists === "object" && !Array.isArray(criteria.lists)) {
     for (const [list, selection] of Object.entries(criteria.lists)) {
@@ -29,12 +36,12 @@ export function tripCriteriaClauses(criteria) {
   return clauses;
 }
 
-export function buildTripEntityFilter(key, page) {
-  const included = tripCriteriaClauses(page?.include);
+export function buildTripEntityFilter(key, page, storedCities = []) {
+  const included = tripCriteriaClauses(page?.include, storedCities);
   const tagged = { trips: key };
   // Empty criteria must never become an unrestricted query.
   if (!included.length) return tagged;
-  const excluded = tripCriteriaClauses(page?.exclude);
+  const excluded = tripCriteriaClauses(page?.exclude, storedCities);
   const criteria = { $or: included };
   if (excluded.length) criteria.$nor = excluded;
   // (included minus excluded) union tagged: explicit tags override exclusions.

@@ -270,6 +270,27 @@ function tokenize(name) {
     .filter((w) => w.length > 2 && !STOP.has(w));
 }
 
+// UrbanRail now writes route identifiers in square brackets, e.g. "[12]",
+// "[9·12·16]", and "[U80/81]". Normalize them before a display name or key
+// is generated, so a presentation change upstream cannot create duplicates.
+function normalizeLineName(raw) {
+  const lineName = raw?.trim();
+  if (!lineName) return null;
+
+  const match = lineName.match(/^\[([^\]]+)\]$/);
+  if (!match) return lineName;
+
+  const identifier = match[1].trim();
+  if (/^\d+$/.test(identifier)) return `Line ${identifier}`;
+
+  const lines = identifier.split(/[·,;/&]+/).map((part) => part.trim()).filter(Boolean);
+  if (lines.length > 1 && lines.every((line) => /^\d+$/.test(line))) {
+    return `Lines ${lines.slice(0, -1).join(", ")} & ${lines.at(-1)}`;
+  }
+
+  return identifier;
+}
+
 // ---- Build a full entity document from a parsed opening ----
 // Returns null if the base key already exists in existingKeys — this means
 // the entry was already handled (inserted, or exists from a previous run/manual
@@ -281,18 +302,19 @@ async function buildEntity(opening, existingKeys) {
 
   const type = normalizeType(opening.type);
   const country = opening.country?.toUpperCase() ?? null;
+  const lineName = normalizeLineName(opening.lineName);
 
   let name;
   if (opening.isNewSystem) {
     name = TYPE_LABELS[type] ?? "Metro";
   } else if (opening.isNewLine) {
-    name = opening.lineName ?? TYPE_LABELS[type] ?? "New Line";
+    name = lineName ?? TYPE_LABELS[type] ?? "New Line";
   } else {
     const dest = opening.toStation ?? opening.fromStation ?? null;
     if (dest) {
-      name = opening.lineName ? `${opening.lineName} to ${dest}` : `to ${dest}`;
+      name = lineName ? `${lineName} to ${dest}` : `to ${dest}`;
     } else {
-      name = opening.lineName ?? TYPE_LABELS[type] ?? "Extension";
+      name = lineName ?? TYPE_LABELS[type] ?? "Extension";
     }
   }
 
@@ -325,8 +347,8 @@ async function buildEntity(opening, existingKeys) {
 
   let link = null;
   try {
-    const query = opening.lineName
-      ? `${opening.city} ${opening.lineName} ${type}`
+    const query = lineName
+      ? `${opening.city} ${lineName} ${type}`
       : `${opening.city} ${type}`;
     link = await findWikipediaArticle(query, country);
   } catch (err) {

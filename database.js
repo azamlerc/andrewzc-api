@@ -640,8 +640,13 @@ export async function getMapRoutes({ mode = null, trip = null } = {}) {
 export async function getEntitiesByTrip(key) {
   const db = await connectToMongo();
   const page = await db.collection("pages").findOne({ key });
+  const hasCityCriteria = [page?.include?.cities, page?.exclude?.cities]
+    .some(cities => Array.isArray(cities) && cities.some(city => typeof city === "string" && city.trim()));
+  const storedCities = hasCityCriteria
+    ? await db.collection("entities").distinct("city", { city: { $type: "string" } })
+    : [];
   const entities = await db.collection("entities")
-    .find(buildTripEntityFilter(key, page))
+    .find(buildTripEntityFilter(key, page, storedCities))
     .sort({ name: 1, key: 1 })
     .toArray();
 

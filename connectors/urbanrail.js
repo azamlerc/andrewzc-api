@@ -85,6 +85,7 @@ function htmlToText(html) {
     .replace(/&amp;/g, "&")
     .replace(/&mdash;|&#151;|&#8212;|&#8213;/g, "—")
     .replace(/&ndash;|&#8211;/g, "–")
+    .replace(/&middot;|&#183;/gi, "·")
     .replace(/&ocirc;/g, "ô")
     .replace(/&eacute;/g, "é")
     .replace(/&egrave;/g, "è")
@@ -215,7 +216,7 @@ For each entry extract:
 - date: YYYY-MM-DD (use YYYY-MM if day unknown, YYYY if only year)
 - city: city name
 - country: two-letter ISO code (infer from context — e.g. Mumbai=IN, Birmingham=GB, Toronto=CA)
-- lineName: line name or number if present (e.g. "Line 2B", "T6", "Line 5")
+- lineName: line name or number if present (e.g. "Line 2B", "T6", "Line 5"). UrbanRail now puts some identifiers in brackets: normalize "[12]" to "Line 12", "[9·12·16]" to "Lines 9, 12 & 16", and "[U80/81]" to "U80/81". Never include square brackets in lineName.
 - fromStation: first/origin station (before the dash)
 - toStation: last/destination station (after the dash)
 - type: from the bracket token — "metro", "monorail", "tram", "light-rail", "suburban", "people-mover"

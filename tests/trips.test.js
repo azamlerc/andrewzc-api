@@ -60,6 +60,20 @@ test("invalid values cannot inject query operators or broaden selection", () => 
   });
 });
 
+test("city includes and excludes resolve accented stored names without matching unrelated cities", () => {
+  const filter = buildTripEntityFilter("trip", {
+    include: { cities: ["durres", "sao-paulo"] },
+    exclude: { cities: ["zurich"] },
+  }, ["Durrës", "Durrës", "São Paulo", "Zürich", "Tirana", null]);
+  assert.deepEqual(filter, {
+    $or: [
+      { $or: [{ city: { $in: ["Durres", "Sao Paulo", "Durrës", "São Paulo"] } }],
+        $nor: [{ city: { $in: ["Zurich", "Zürich"] } }] },
+      { trips: "trip" },
+    ],
+  });
+});
+
 test("database loads saved criteria before querying and preserves sorted, unlimited response", async () => {
   const calls = [];
   const entities = [{ list: "airports", key: "brussels" }];
@@ -71,7 +85,11 @@ test("database loads saved criteria before querying and preserves sorted, unlimi
           calls.push(["page", filter]); return page;
         } };
         assert.equal(name, "entities");
-        return { find(filter) {
+        return { async distinct(field, filter) {
+          assert.equal(field, "city");
+          assert.deepEqual(filter, { city: { $type: "string" } });
+          return ["Aachen", "Zurich"];
+        }, find(filter) {
           calls.push(["entities", filter]);
           return { sort(order) {
             calls.push(["sort", order]);
