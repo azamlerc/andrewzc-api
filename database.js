@@ -721,7 +721,7 @@ export async function getEntitiesNearEntity(list, key, { radiusKm = 50, limit = 
   return { results: filtered, source: { lon, lat } };
 }
 
-export async function getRecentEntities({ days = 30, listFilter = null, limit = 100 } = {}) {
+export async function getRecentEntities({ days = 30, listFilter = null, limit = 300 } = {}) {
   const db = await connectToMongo();
   const cutoffDate = new Date();
   cutoffDate.setUTCHours(0, 0, 0, 0);

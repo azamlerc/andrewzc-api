@@ -124,7 +124,7 @@ entitiesRouter.get("/recent", async (req, res) => {
   const daysParsed = daysRaw == null ? 30 : parseInt(daysRaw, 10);
   const days       = Number.isFinite(daysParsed) ? daysParsed : NaN;
   const listFilter = req.query.list ? String(req.query.list) : null;
-  const limit      = Math.min(parseInt(req.query.limit) || 100, 200);
+  const limit      = Math.min(parseInt(req.query.limit) || 300, 300);
 
   if (!Number.isFinite(days) || days < 0) {
     return res.status(400).json({ error: "bad_request", message: "Missing or invalid ?days=" });
