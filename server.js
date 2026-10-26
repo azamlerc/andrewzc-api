@@ -61,7 +61,7 @@ app.use("/resume",   resumeRouter);
 app.use("/portfolio", portfolioRouter);
 app.use("/mcp", mcpRouter);
 app.use("/blue-room", blueRoomRouter);
-app.use("/",         lookupRouter);   // /flags, /countries, /cities, /trips, /artists, /search, /coords, /wiki
+app.use("/",         lookupRouter);   // /flags, /countries, /cities, /trips, /artists, /search, /location, /wiki
 app.use("/chat",     chatRouter);
 app.use("/agents",   requireAdminSession, agentsRouter);
 
@@ -106,7 +106,7 @@ app.get("/", (_req, res) => {
     "POST /chat/senza",
     "POST /chat/railfan               (admin)",
     "POST /search",
-    "GET  /coords?url=&list=",
+    "GET  /location?url=&list=",
     "GET  /wiki?q=",
     "POST /agents/hygiene              (admin)",
     "POST /agents/hygiene/batch        (admin)",

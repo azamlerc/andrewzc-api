@@ -224,6 +224,7 @@ entitiesRouter.post("/:list", requireAdminSession, async (req, res) => {
     return res.status(201).json(strip(result.doc));
   } catch (err) {
     if (err?.code === 11000 || String(err).includes("E11000")) return res.status(409).json({ error: "conflict", message: "Entity already exists" });
+    if (err.status === 400) return res.status(400).json({ error: "bad_request", message: err.message });
     console.error("POST /entities/:list failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
@@ -240,6 +241,7 @@ entitiesRouter.put("/:list/:key", requireAdminSession, async (req, res) => {
     if (!doc) return res.status(404).json({ error: "not_found", message: "Entity not found" });
     return res.json(strip(doc));
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: "bad_request", message: err.message });
     console.error("PUT /entities/:list/:key failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }

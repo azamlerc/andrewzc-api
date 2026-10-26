@@ -1,10 +1,10 @@
+import { pointLatLon } from "./location.js";
 // Fetch coordinates from a Wikipedia, Booking.com, or Airbnb URL.
 //
 // Main export:
-//   getCoordsFromUrl(url, { list }) → { coords, location } | null
+//   getLocationFromUrl(url, { list }) → { location } | null
 //
 // Returns:
-//   coords   — human-readable decimal string: "51.50740000, -0.12780000"
 //   location — GeoJSON Point: { type: "Point", coordinates: [lon, lat] }
 //
 // The cascade for Wikipedia pages mirrors the logic in andrewzc-v2/wiki.swift:
@@ -23,15 +23,9 @@ function toGeoJSON(lat, lon) {
   return { type: "Point", coordinates: [lon, lat] };
 }
 
-function formatDecimal(lat, lon) {
-  return `${lat.toFixed(8)}, ${lon.toFixed(8)}`;
-}
-
 function makeResult(lat, lon) {
-  return {
-    coords: formatDecimal(lat, lon),
-    location: toGeoJSON(lat, lon),
-  };
+  const location = toGeoJSON(lat, lon);
+  return pointLatLon(location) ? { location } : null;
 }
 
 // ─── DMS / mixed coordinate parser (mirrors parseCoordinates in wiki.swift) ───
@@ -266,7 +260,7 @@ async function throttledWikipediaFetch(url) {
   return loadWikipediaContent(url);
 }
 
-export async function getCoordsFromUrl(url, { list = "" } = {}) {
+export async function getLocationFromUrl(url, { list = "" } = {}) {
   const host = new URL(url).hostname;
 
   // ── Booking.com ──────────────────────────────────────────────────────────
@@ -300,7 +294,7 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
       const encoded = encodeURI(url);
       if (encoded !== url) {
         console.log(`Retrying encoded: ${encoded}`);
-        return getCoordsFromUrl(encoded, { list });
+        return getLocationFromUrl(encoded, { list });
       }
     }
     console.warn(`No content for: ${url}`);
@@ -315,7 +309,7 @@ export async function getCoordsFromUrl(url, { list = "" } = {}) {
     console.log(`Redirect → ${newName}`);
     const base = wikiBaseUrl(url);
     const redirectUrl = `${base}/wiki/${encodeURIComponent(newName.replace(/ /g, "_"))}`;
-    if (redirectUrl !== url) return getCoordsFromUrl(redirectUrl, { list });
+    if (redirectUrl !== url) return getLocationFromUrl(redirectUrl, { list });
   }
 
   // ── 2. {{coord|...}} / {{Coordenadas|...}} / {{Coords|...}} template ─────

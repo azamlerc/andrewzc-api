@@ -20,13 +20,13 @@ const CONTEXT_RAW = "https://raw.githubusercontent.com/azamlerc/hello-context/ma
 
 function strip(doc) {
   if (!doc) return doc;
-  const { _id, wikiEmbedding, enrichedAt, __isNew, ...rest } = doc;
+  const { coords: _legacyCoords, _id, wikiEmbedding, enrichedAt, __isNew, ...rest } = doc;
   return rest;
 }
 
 function stripKeepSummary(doc) {
   if (!doc) return doc;
-  const { _id, wikiEmbedding, enrichedAt, ...rest } = doc;
+  const { coords: _legacyCoords, _id, wikiEmbedding, enrichedAt, ...rest } = doc;
   return rest;
 }
 

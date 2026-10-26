@@ -1,3 +1,4 @@
+import { assertLocationFields, pointLatLon } from "./location.js";
 // Database layer — all MongoDB and OpenAI operations.
 // No HTTP, no Express. Each function takes plain arguments and returns plain objects.
 
@@ -386,6 +387,7 @@ function toDateAdded(value, fallback = new Date()) {
 }
 
 export async function createEntity(list, payload) {
+  assertLocationFields(payload);
   const db       = await connectToMongo();
   const pages    = db.collection("pages");
   const entities = db.collection("entities");
@@ -424,6 +426,7 @@ export async function createEntity(list, payload) {
 }
 
 export async function updateEntity(list, key, patch) {
+  assertLocationFields(patch);
   const db  = await connectToMongo();
   const now = new Date();
   const result = await db.collection("entities").findOneAndUpdate(
@@ -496,7 +499,7 @@ export async function enrichEntity(list, key) {
   if (!entity) return { error: "not_found" };
 
   const tags           = page?.tags ?? [];
-  const skipCoords     = tags.includes("no-coords") || tags.includes("people");
+  const skipLocation     = tags.includes("no-coords") || tags.includes("people");
   const needsReference = tags.includes("reference") || tags.includes("reference-optional");
 
   const update = {};
@@ -515,13 +518,12 @@ export async function enrichEntity(list, key) {
 
   const link = update.link ?? entity.link;
 
-  // 2. Coords — extract from Wikipedia page
-  if (!wikiBlocked && !skipCoords && !entity.coords && link && /wikipedia\.org/.test(link)) {
+  // 2. Location — extract from Wikipedia page
+  if (!wikiBlocked && !skipLocation && !entity.location && link && /wikipedia\.org/.test(link)) {
     try {
-      const { getCoordsFromUrl } = await import("./wiki.js");
-      const result = await getCoordsFromUrl(link, { list });
+      const { getLocationFromUrl } = await import("./wiki.js");
+      const result = await getLocationFromUrl(link, { list });
       if (result) {
-        update.coords   = result.coords;
         update.location = result.location;
       }
     } catch (err) {
@@ -530,9 +532,9 @@ export async function enrichEntity(list, key) {
     }
   }
 
-  // 3. City — nearest city from coords
+  // 3. City — nearest city from location
   const location = update.location ?? entity.location;
-  if (!skipCoords && location && !entity.city) {
+  if (!skipLocation && location && !entity.city) {
     const city = await findNearestCity(location, database);
     if (city) update.city = city;
   }
@@ -632,7 +634,7 @@ export async function getMapRoutes({ mode = null, trip = null } = {}) {
   }
   const entities = refs.size ? await db.collection("entities").find(
     { $or: [...refs.values()] },
-    { projection: { _id: 0, list: 1, key: 1, name: 1, location: 1, coords: 1 } }
+    { projection: { _id: 0, list: 1, key: 1, name: 1, location: 1 } }
   ).toArray() : [];
   return { routes, entities };
 }
@@ -670,7 +672,7 @@ export async function getEntitiesByArtist(key) {
 // ---- Geo search ----
 
 const GEO_PROJECTION = {
-  name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, coords: 1, been: 1,
+  name: 1, list: 1, key: 1, icons: 1, link: 1, reference: 1, location: 1, been: 1,
   distanceKm: { $round: [{ $divide: ["$dist.calculated", 1000] }, 1] },
 };
 
@@ -711,7 +713,7 @@ export async function getEntitiesNearEntity(list, key, { radiusKm = 50, limit = 
   );
 
   if (!source)           return { error: "not_found" };
-  if (!source.location)  return { error: "no_location" };
+  if (!pointLatLon(source.location)) return { error: "no_location" };
 
   const [lon, lat] = source.location.coordinates;
   const results    = await getEntitiesNearPoint(lon, lat, { radiusKm, limit: limit + 1 });

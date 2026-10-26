@@ -1,3 +1,4 @@
+import { pointLatLon } from "../location.js";
 // agents/hygieneRules.js
 // Declarative hygiene rules derived from hygiene-rules.md.
 // Each rule follows the shape defined in agents/runner.js.
@@ -95,37 +96,15 @@ const U8 = {
   message: () => "dateAdded is missing on agent-created record",
 };
 
-// U9 — GeoJSON location missing (derives from coords)
+// U9 — malformed GeoJSON is reported, never reconstructed from legacy data.
 const U9 = {
   id: "U9",
-  scope: "auto",
-  applies: (e) => !!e.coords && !e.location,
-  check: () => true,
-  fix: (e) => {
-    const parts = e.coords.split(",").map((s) => parseFloat(s.trim()));
-    if (parts.length !== 2 || parts.some(isNaN)) return null;
-    const [lat, lon] = parts;
-    return { location: { type: "Point", coordinates: [lon, lat] } };
-  },
-  message: (e) => `location GeoJSON missing; coords is "${e.coords}"`,
+  scope: "flag",
+  applies: (e) => e.location != null,
+  check: (e) => !pointLatLon(e.location),
+  message: () => "location is not a valid GeoJSON Point",
   flagField: "location",
-};
-
-// U10 — coords format
-const U10 = {
-  id: "U10",
-  scope: "auto",
-  applies: (e) => !!e.coords,
-  check: (e) => !/^-?\d+\.?\d*,\s*-?\d+\.?\d*$/.test(e.coords),
-  fix: (e) => {
-    // Attempt whitespace normalization only
-    const normalized = e.coords.replace(/\s*,\s*/, ", ").trim();
-    if (!/^-?\d+\.?\d*,\s*-?\d+\.?\d*$/.test(normalized)) return null;
-    return { coords: normalized };
-  },
-  message: (e) => `coords "${e.coords}" is not in expected "lat, lon" format`,
-  flagField: "coords",
-  flagValue: (e) => e.coords,
+  flagValue: (e) => e.location,
 };
 
 // ---- Confluence-specific rules ----
@@ -144,9 +123,9 @@ const C1 = {
     );
   },
   fix: (e) => {
-    if (!e.coords) return null;
-    const [lat, lon] = e.coords.split(",").map((s) => parseFloat(s.trim()));
-    if (isNaN(lat) || isNaN(lon)) return null;
+    const point = pointLatLon(e.location);
+    if (!point) return null;
+    const { lat, lon } = point;
     const latDir = lat >= 0 ? "N" : "S";
     const lonDir = lon >= 0 ? "E" : "W";
     const prefix =
@@ -167,9 +146,9 @@ const C1 = {
 const C2 = {
   id: "C2",
   scope: "flag",
-  applies: (e) => e.list === "confluence" && !!e.coords && !!e.prefix,
+  applies: (e) => e.list === "confluence" && !!pointLatLon(e.location) && !!e.prefix,
   check: (e) => {
-    const [lat, lon] = e.coords.split(",").map((s) => parseFloat(s.trim()));
+    const { lat, lon } = pointLatLon(e.location);
     const match = e.prefix.match(/(\d+)°([NS])\s+(\d+)°([EW])/);
     if (!match) return false; // C1 will catch malformed prefix
     const [, pLat, latDir, pLon, lonDir] = match;
@@ -177,8 +156,8 @@ const C2 = {
     const expectedLon = parseInt(pLon) * (lonDir === "W" ? -1 : 1);
     return Math.round(lat) !== expectedLat || Math.round(lon) !== expectedLon;
   },
-  message: (e) => `coords "${e.coords}" does not match prefix "${e.prefix}"`,
-  flagField: "coords",
+  message: (e) => `location ${JSON.stringify(e.location)} does not match prefix "${e.prefix}"`,
+  flagField: "location",
 };
 
 const C3 = {
@@ -187,9 +166,9 @@ const C3 = {
   applies: (e) => e.list === "confluence",
   check: (e) => !e.link || !e.link.includes("confluence.org"),
   fix: (e) => {
-    if (!e.coords) return null;
-    const [lat, lon] = e.coords.split(",").map((s) => parseFloat(s.trim()));
-    if (isNaN(lat) || isNaN(lon)) return null;
+    const point = pointLatLon(e.location);
+    if (!point) return null;
+    const { lat, lon } = point;
     return { link: `https://confluence.org/confluence.php?lat=${Math.round(lat)}&lon=${Math.round(lon)}` };
   },
   message: (e) => `link "${e.link}" is not a confluence.org URL`,
@@ -376,7 +355,7 @@ const H1 = {
 
 export const RULES = [
   U1, U2, U3, U4,
-  U6, U7, U8, U9, U10,
+  U6, U7, U8, U9,
   C1, C2, C3,
   P1, P2, P3, P4,
   T1, T3,

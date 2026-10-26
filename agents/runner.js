@@ -1,3 +1,4 @@
+import { assertLocationFields } from "../location.js";
 // agents/runner.js
 // Generic rule engine used by the hygiene agent.
 // Evaluates declarative rules against an entity, returning fixes and flags.
@@ -107,6 +108,7 @@ export async function evaluate(entity, rules) {
 export async function applyFixes(db, entityId, fixes) {
   if (!fixes.length) return false;
   const patch = Object.assign({}, ...fixes.map((f) => f.patch));
+  assertLocationFields(patch);
   patch.updatedAt = new Date();
   await db.collection("entities").updateOne({ _id: entityId }, { $set: patch });
   return true;

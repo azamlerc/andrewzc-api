@@ -1,6 +1,6 @@
 // routes/lookup.js
 // Top-level lookup endpoints: /flags, /countries, /cities, /trips, /artists,
-// /search, /coords, /wiki
+// /search, /location, /wiki
 // Mounted at "/" in server.js.
 
 import express from "express";
@@ -11,7 +11,7 @@ import {
 } from "../database.js";
 import { cityKeyToDisplayName } from "../utils.js";
 import { naturalLanguageSearch } from "../search.js";
-import { getCoordsFromUrl } from "../wiki.js";
+import { getLocationFromUrl } from "../wiki.js";
 import { strip, cleanError } from "./middleware.js";
 
 export const lookupRouter = express.Router();
@@ -99,16 +99,16 @@ lookupRouter.post("/search", async (req, res) => {
   }
 });
 
-lookupRouter.get("/coords", async (req, res) => {
+lookupRouter.get("/location", async (req, res) => {
   const url  = String(req.query.url  || "").trim();
   const list = String(req.query.list || "").trim();
   if (!url) return res.status(400).json({ error: "bad_request", message: "Missing ?url=" });
   try { new URL(url); } catch { return res.status(400).json({ error: "bad_request", message: "Invalid URL" }); }
   try {
-    const result = await getCoordsFromUrl(url, { list });
-    return res.json(result ?? { coords: null, location: null });
+    const result = await getLocationFromUrl(url, { list });
+    return res.json(result ?? { location: null });
   } catch (err) {
-    console.error("GET /coords failed:", err);
+    console.error("GET /location failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });

@@ -63,13 +63,21 @@ Key fields:
 | `country`      | string   | ISO 2-letter country code (e.g. `FR`, `DE`)                  |
 | `countries`    | string[] | For entities spanning multiple countries                      |
 | `city`         | string   | City display name (e.g. `"Paris"`, `"New York, NY"`)         |
-| `coords`       | object   | `{ lat, lon }` — display coordinates                         |
-| `location`     | GeoJSON  | `{ type: "Point", coordinates: [lon, lat] }` — for geo search |
+| `location`     | GeoJSON  | `{ type: "Point", coordinates: [lon, lat] }` — canonical location |
 | `reference`    | string   | Secondary identifier used in key generation for some lists    |
 | `notes`        | string[] | Personal notes in Andrew's voice                              |
 | `props`        | object   | Structured facts (Wikidata-style); schema varies by list      |
 | `images`       | string[] | Image filenames stored in S3 under `<list>/`                  |
 | `wikiSummary`  | string   | First paragraph of Wikipedia article (returned on single fetch)|
+
+`location` is the single source of truth for maps and spherical searches. It is a
+GeoJSON Point with numeric longitude first and latitude second, or null/absent
+when unknown. The editor displays latitude, longitude as text and converts it at
+the form boundary. Entity creates/updates reject `coords` and malformed locations
+with HTTP 400; responses omit legacy `coords` without deleting it from MongoDB.
+`GET /location?url=&list=` returns `{ location }` for URL enrichment. The old
+`/coords` lookup endpoint has been replaced. Deploy the API with the frontend
+and CLI changes together so the lookup contract stays aligned.
 
 #### The `props` object
 
