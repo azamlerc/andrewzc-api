@@ -618,11 +618,16 @@ export async function getEntitiesByCity(city) {
 }
 
 // Resolve endpoints independently of page membership, using list AND key.
-export async function getMapRoutes({ mode = null, trip = null } = {}) {
+export async function getMapRoutes({ mode = null, trip = null, country = null } = {}) {
   const db = await connectToMongo();
   const filter = {};
   if (mode) filter.mode = mode;
   if (trip) filter.trips = trip;
+  if (country) {
+    const code = country.trim().toUpperCase();
+    if (!/^[A-Z]{2}(?:-[A-Z0-9]+)?$/.test(code)) throw new Error("Invalid country code");
+    filter.$or = [{ country: code }, { countries: code }];
+  }
   const routes = await db.collection("routes").find(filter).sort({ name: 1, key: 1 }).toArray();
   const refs = new Map();
   for (const route of routes) {

@@ -19,11 +19,15 @@ export const lookupRouter = express.Router();
 lookupRouter.get("/routes", async (req, res) => {
   const mode = typeof req.query.mode === "string" ? req.query.mode.trim() : null;
   const trip = typeof req.query.trip === "string" ? req.query.trip.trim() : null;
+  const country = typeof req.query.country === "string" ? req.query.country.trim().toUpperCase() : null;
+  if (req.query.country !== undefined && (!country || !/^[A-Z]{2}(?:-[A-Z0-9]+)?$/.test(country))) {
+    return res.status(400).json({ error: "bad_request", message: "Invalid country code" });
+  }
   if (mode && !["air", "rail", "road", "sea"].includes(mode)) {
     return res.status(400).json({ error: "bad_request", message: "Unknown transport mode" });
   }
   try {
-    const result = await getMapRoutes({ mode, trip });
+    const result = await getMapRoutes({ mode, trip, country });
     return res.json({ routes: result.routes.map(strip), entities: result.entities.map(strip) });
   } catch (err) {
     console.error("GET /routes failed:", err);

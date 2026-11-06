@@ -69,6 +69,7 @@ export function cityKeyToDisplayName(key) {
 // Sub-national flags use Unicode tag sequences rather than regional indicator
 // pairs, so they need explicit mapping to their parent ISO 3166-1 alpha-2 code.
 const SUBNATIONAL_FLAG_MAP = {
+  "🇮🇨": "ES-CN", // Canary Islands (Unicode IC; site country code ES-CN)
   "🏴󠁧󠁢󠁥󠁮󠁧󠁿": "GB", // England
   "🏴󠁧󠁢󠁳󠁣󠁴󠁿": "GB", // Scotland
   "🏴󠁧󠁢󠁷󠁬󠁳󠁿": "GB", // Wales
