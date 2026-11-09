@@ -23,7 +23,7 @@ lookupRouter.get("/routes", async (req, res) => {
   if (req.query.country !== undefined && (!country || !/^[A-Z]{2}(?:-[A-Z0-9]+)?$/.test(country))) {
     return res.status(400).json({ error: "bad_request", message: "Invalid country code" });
   }
-  if (mode && !["air", "rail", "road", "sea"].includes(mode)) {
+  if (mode && !["air", "train", "metro", "rail", "road", "sea"].includes(mode)) {
     return res.status(400).json({ error: "bad_request", message: "Unknown transport mode" });
   }
   try {
