@@ -37,3 +37,16 @@ for (const [query, expectedStatus] of [[{country: "es-cn"}, 200], [{country: ["B
     else assert.equal(selected, undefined);
   });
 }
+
+for (const mode of ['bus', 'car', 'train', 'metro', 'rail', 'road', 'hovercraft']) {
+  test(`routes HTTP mode validation: ${mode}`, async () => {
+    let handler, selected, status = 200;
+    vm.runInNewContext(registration, {console, lookupRouter: {get(path, fn) {handler = fn;}},
+      getMapRoutes: async filter => {selected = filter; return {routes: [], entities: []};}, strip: x => x, cleanError: x => x.message});
+    const response = {status(n) {status = n; return this;}, json() {return this;}};
+    await handler({query: {mode}}, response);
+    assert.equal(status, ['rail', 'road', 'hovercraft'].includes(mode) ? 400 : 200);
+    if (status === 200) assert.equal(selected.mode, mode);
+    else assert.equal(selected, undefined);
+  });
+}
