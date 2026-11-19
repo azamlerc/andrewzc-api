@@ -49,6 +49,8 @@ export async function ensureIndexes() {
 
 	const { ensureBlueRoomIndexes } = await import("./blue-room/database.js");
 	await ensureBlueRoomIndexes();
+	const { ensureConnectionsIndexes } = await import("./connections/store.js");
+	await ensureConnectionsIndexes();
 }
 
 // ---- Pages ----

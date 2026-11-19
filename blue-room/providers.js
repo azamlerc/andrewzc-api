@@ -64,6 +64,7 @@ export async function callClaude({
   maxTokens = DIALOGUE_MAX_TOKENS,
   client,
   signal,
+  maxRetries,
 }) {
   requireRequest({ system, messages, model, maxTokens });
   const sdk = requireClient(client, "ANTHROPIC_API_KEY", apiKey => new Anthropic({ apiKey }));
@@ -75,7 +76,7 @@ export async function callClaude({
     messages,
     output_config: { effort },
     cache_control: { type: "ephemeral" },
-  }, signal ? { signal } : undefined);
+  }, signal || maxRetries !== undefined ? { ...(signal && { signal }), ...(maxRetries !== undefined && { maxRetries }) } : undefined);
 
   if (response.stop_reason === "refusal") {
     throw new BlueRoomProviderError("refusal", {
@@ -113,6 +114,7 @@ export async function callOpenAI({
   maxTokens = DIALOGUE_MAX_TOKENS,
   client,
   signal,
+  maxRetries,
 }) {
   requireRequest({ system, messages, model, maxTokens });
   const sdk = requireClient(client, "OPENAI_API_KEY", apiKey => new OpenAI({ apiKey }));
@@ -125,7 +127,7 @@ export async function callOpenAI({
     max_output_tokens: maxTokens,
     store: false,
     truncation: "disabled",
-  }, signal ? { signal } : undefined);
+  }, signal || maxRetries !== undefined ? { ...(signal && { signal }), ...(maxRetries !== undefined && { maxRetries }) } : undefined);
 
   const incompleteReason = response.incomplete_details?.reason ?? null;
   const refused = (response.output ?? []).some(item =>
