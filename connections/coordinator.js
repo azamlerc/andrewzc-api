@@ -1,5 +1,5 @@
 import { agentRequest, applyFailure, applyResponse, localPhases, maxActiveMs, maxCalls, promptVersion, providers } from "./agents.js";
-import { finish, resolveGuess, terminal } from "./rules.js";
+import { completeFinalGuess, finish, isFinalPlayerTurn, resolveGuess, terminal } from "./rules.js";
 
 export const rulesVersion = "1";
 
@@ -13,7 +13,14 @@ function phaseAfterLimit(game) {
   }
 }
 
-export async function advance(game, { store, client, modelCalls = providers, timeoutMs = 36000 }) {
+function modelTimeout(game) {
+  if (isFinalPlayerTurn(game)) return 8000;
+  if (game.phase === "generate") return 90000;
+  if (game.status === "validating") return 60000;
+  return 36000;
+}
+
+export async function advance(game, { store, client, modelCalls = providers, timeoutMs = modelTimeout(game) }) {
   if (game.phase === "done" || (!terminal(game.status) && ["paused", "failed"].includes(game.status))) {
     return { game, reason: "stopped" };
   }
@@ -26,11 +33,14 @@ export async function advance(game, { store, client, modelCalls = providers, tim
     (!terminal(game.status) && game.activeMs >= maxActiveMs) || (game.phase === "generate" && game.generationCount >= 3));
   const incompatible = paid && (game.rulesVersion !== rulesVersion ||
     ["author", "player"].some((role) => game.promptVersions[role] !== promptVersion(role)));
-  const claimed = await store.claim(game, paid && !exhausted && !incompatible);
+  const leaseDuration = timeoutMs + 10000;
+  const claimed = await store.claim(game, paid && !exhausted && !incompatible, leaseDuration);
   if (!claimed) return { game: await store.get(game._id), reason: "busy" };
   const claim = claimed.claim;
 
-  if (incompatible) {
+  if ((exhausted || incompatible) && isFinalPlayerTurn(claimed)) {
+    completeFinalGuess(claimed);
+  } else if (incompatible) {
     if (terminal(claimed.status)) claimed.phase = "done";
     else {
       claimed.phase = "done";
@@ -42,30 +52,43 @@ export async function advance(game, { store, client, modelCalls = providers, tim
   else {
     let slot;
     try {
-      slot = await store.providerSlot(client);
+      slot = await store.providerSlot(client, leaseDuration);
     } catch (error) {
       await store.release(claimed);
       throw error;
     }
     if (!slot.release) {
       await store.release(claimed);
+      if (isFinalPlayerTurn(claimed)) {
+        const fallback = await store.claim(game, false);
+        if (fallback) {
+          completeFinalGuess(fallback);
+          const updated = await store.commit(fallback, fallback.claim);
+          if (updated) return { game: updated, reason: "advanced" };
+        }
+      }
       return { game: await store.get(game._id), reason: slot.reason };
     }
     const startedAt = Date.now();
     const beforeResponse = structuredClone({ ...claimed, _id: null, claim: null });
+    let signal;
     try {
       if (!await store.ownsClaim(claimed)) return { game: await store.get(game._id), reason: "stale" };
       const { role, ...request } = agentRequest(claimed);
       const { provider, model } = claimed[role];
-      const result = await modelCalls[provider]({ ...request, model, maxRetries: 0, signal: AbortSignal.timeout(timeoutMs) });
+      signal = AbortSignal.timeout(timeoutMs);
+      const result = await modelCalls[provider]({ ...request, model, maxRetries: 0, signal });
       try {
         applyResponse(claimed, result.text);
       } catch (error) {
+        const kind = error instanceof SyntaxError ? "invalid_json"
+          : error?.name === "ZodError" ? "invalid_schema" : "invalid_response";
+        console.warn("connections: rejected model output", { gameId: String(game._id), phase: claimed.phase, provider, kind });
         Object.assign(claimed, { ...beforeResponse, _id: game._id });
         applyFailure(claimed, error, { malformed: true });
       }
     } catch (error) {
-      applyFailure(claimed, error);
+      applyFailure(claimed, error, { timedOut: signal?.aborted });
     } finally {
       claimed.activeMs += Date.now() - startedAt;
       try { await slot.release(); } catch { /* The slot lease expires without intervention. */ }

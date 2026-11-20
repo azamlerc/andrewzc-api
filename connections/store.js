@@ -71,11 +71,11 @@ export function createStore(getDb = connectToMongo) {
         projection: { createdAt: 1, author: 1, player: 1, status: 1, "key.title": 1 },
       }).sort({ createdAt: -1, _id: -1 }).limit(limit).toArray();
     },
-    claim: async (game, paid) => (await games()).findOneAndUpdate({
+    claim: async (game, paid, leaseDuration = leaseMs) => (await games()).findOneAndUpdate({
       _id: game._id, revision: game.revision,
       $or: [{ claim: null }, { "claim.expiresAt": { $lte: new Date() } }],
     }, {
-      $set: { claim: { id: randomUUID(), expiresAt: new Date(Date.now() + leaseMs) } },
+      $set: { claim: { id: randomUUID(), expiresAt: new Date(Date.now() + leaseDuration) } },
       ...(paid && { $inc: { calls: 1, ...(game.phase === "generate" ? { generationCount: 1 } : {}) } }),
     }, { returnDocument: "after" }),
     async release(game) {
@@ -100,14 +100,14 @@ export function createStore(getDb = connectToMongo) {
       }, { $set: { ...record, claim: null }, $inc: { revision: 1 } }, { returnDocument: "after" });
     },
     creationAllowed: async (client) => takeQuota(`create:${client}`, 3600000, 6),
-    async providerSlot(client) {
+    async providerSlot(client, leaseDuration = leaseMs) {
       const providerSlots = (await getDb()).collection(slots);
       const id = randomUUID();
       for (let slot = 0; slot < 3; slot++) {
         try {
           await providerSlots.updateOne(
             { _id: slot, expiresAt: { $lte: new Date() } },
-            { $set: { id, expiresAt: new Date(Date.now() + leaseMs) } },
+            { $set: { id, expiresAt: new Date(Date.now() + leaseDuration) } },
             { upsert: true },
           );
         } catch (error) {

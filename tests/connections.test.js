@@ -4,8 +4,8 @@ import { once } from "node:events";
 import test from "node:test";
 import express from "express";
 import { MongoClient } from "mongodb";
-import { agentRequest, applyResponse, promptVersion } from "../connections/agents.js";
-import { rulesVersion } from "../connections/coordinator.js";
+import { agentRequest, applyFailure, applyResponse, promptVersion } from "../connections/agents.js";
+import { advance, rulesVersion } from "../connections/coordinator.js";
 import { gameSummary, publicGame } from "../connections/projections.js";
 import { finish, prepareCandidate, resolveGuess, stageGuess } from "../connections/rules.js";
 import { createStore, digest, newGame } from "../connections/store.js";
@@ -76,6 +76,72 @@ test("a separate editorial review must pass before a candidate becomes public", 
   applyResponse(game, '{"pass":false,"feedback":"Make purple uniform."}');
   assert.equal(game.phase, "generate");
   assert.deepEqual(publicGame(game).tiles, []);
+});
+
+test("pre-publication review accepts fenced JSON and a bare approval verdict", () => {
+  const game = newGame({ author: { provider: "openai" }, player: { provider: "claude" } });
+  applyResponse(game, JSON.stringify(fixture));
+  const observations = "x".repeat(900);
+  applyResponse(game, '```json\n' + JSON.stringify({ observations }) + '\n```');
+  assert.equal(game.coldReview.length, 700);
+  assert.throws(() => applyResponse(game, '{"pass":false}'));
+  assert.throws(() => applyResponse(game, 'Here is the result:\n```json\n{"pass":true}\n```'), SyntaxError);
+  assert.deepEqual(publicGame(game).tiles, []);
+  game.failure = "malformed_output";
+  assert.equal(publicGame(game).failureStage, "quality_review");
+  assert.doesNotMatch(JSON.stringify(publicGame(game)), /Under the Spotlight/);
+  game.failure = null;
+  applyResponse(game, '```json\n{"pass":true}\n```');
+  assert.equal(game.status, "playing");
+  assert.equal(publicGame(game).tiles.length, 16);
+});
+
+test("the third solve skips the host and a failed final turn stages the remaining tiles", () => {
+  const { game, ids } = board();
+  for (const row of fixture.groups.slice(0, 3)) {
+    stageGuess(game, ids(row.members.map(({ ref }) => ref)));
+    resolveGuess(game);
+  }
+  assert.equal(game.phase, "player");
+  const request = agentRequest(game);
+  assert.equal(request.role, "player");
+  assert.equal(JSON.parse(request.messages[0].content).remaining.length, 4);
+  applyFailure(game, new Error("timeout"), { timedOut: true });
+  assert.equal(game.phase, "resolve");
+  assert.equal(game.status, "playing");
+  assert.equal(game.events.at(-1).type, "guess_previewed");
+  assert.equal(game.pendingGuess.automatic, true);
+  resolveGuess(game);
+  assert.equal(game.status, "won");
+  assert.equal(game.mistakes, 4);
+  assert.equal(game.guesses.at(-1).automatic, true);
+});
+
+test("board generation extends the lease and distinguishes a provider timeout", async () => {
+  const game = newGame({
+    author: { provider: "openai", model: "scripted" }, player: { provider: "claude", model: "scripted" },
+    promptVersions: { author: promptVersion("author"), player: promptVersion("player") }, rulesVersion,
+  });
+  const store = {
+    async claim(record, paid, leaseDuration) {
+      assert.equal(paid, true);
+      assert.equal(leaseDuration, 100000);
+      return { ...record, claim: { id: "claim" }, generationCount: 1 };
+    },
+    async providerSlot(_client, leaseDuration) {
+      assert.equal(leaseDuration, 100000);
+      return { release: async () => {} };
+    },
+    ownsClaim: async () => true,
+    commit: async (record) => record,
+  };
+  const { game: result } = await advance(game, { store, modelCalls: {
+    openai: async () => ({ text: JSON.stringify(fixture) }),
+  } });
+  assert.equal(result.status, "validating");
+  applyFailure(game, new Error("timeout"), { timedOut: true });
+  assert.equal(publicGame(game).failure, "provider_timeout");
+  assert.equal(publicGame(game).failureStage, "authoring");
 });
 
 const uri = process.env.CONNECTIONS_TEST_MONGO;

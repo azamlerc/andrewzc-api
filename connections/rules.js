@@ -116,8 +116,18 @@ export function stageGuess(game, tileIds, now = Date.now()) {
   return true;
 }
 
-export function resolveGuess(game, automatic = false) {
-  const tileIds = game.pendingGuess.tileIds;
+export function isFinalPlayerTurn(game) {
+  return game.phase === "player" && game.solved.length === 3;
+}
+
+export function completeFinalGuess(game) {
+  const solvedIds = new Set(game.solved.flatMap((row) => row.tileIds));
+  const tileIds = game.tiles.filter(({ id }) => !solvedIds.has(id)).map(({ id }) => id);
+  if (stageGuess(game, tileIds)) game.pendingGuess.automatic = true;
+}
+
+export function resolveGuess(game) {
+  const { tileIds, automatic } = game.pendingGuess;
   const unsolved = game.key.groups.filter((row) => !game.solved.some(({ color }) => color === row.color));
   const overlaps = unsolved.map((row) => row.members.filter(({ id }) => tileIds.includes(id)).length);
   const match = unsolved[overlaps.indexOf(4)];
@@ -133,5 +143,5 @@ export function resolveGuess(game, automatic = false) {
   addEvent(game, "guess_resolved", result);
   if (game.solved.length === 4) finish(game, "won", "solved");
   else if (game.mistakes === 0) finish(game, "lost", "mistakes");
-  else game.phase = "host";
+  else game.phase = game.solved.length === 3 ? "player" : "host";
 }

@@ -8,6 +8,11 @@ export function gameSummary(game) {
   };
 }
 
+const failureStages = {
+  generate: "authoring", cold_review: "cold_review", quality_review: "quality_review",
+  host: "author_turn", player: "player_turn",
+};
+
 export function publicGame(game) {
   return {
     ...gameSummary(game),
@@ -24,6 +29,8 @@ export function publicGame(game) {
       : game.status === "playing" ? "thinking" : game.status,
     canAdvance: game.phase !== "done" && (terminal(game.status) || !["paused", "failed"].includes(game.status)),
     ...(game.failure ? { failure: game.failure } : {}),
+    ...(["malformed_output", "provider_timeout"].includes(game.failure) && failureStages[game.phase]
+      ? { failureStage: failureStages[game.phase] } : {}),
   };
 }
 
