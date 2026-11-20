@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { BLUE_ROOM_MODELS, BlueRoomProviderError, callClaude, callOpenAI } from "../blue-room/providers.js";
 import { modelBoard } from "./projections.js";
-import { addEvent, completeFinalGuess, finish, isFinalPlayerTurn, normalize, prepareCandidate, stageGuess, turnSchema } from "./rules.js";
+import { addEvent, completeFinalGuess, finish, isFinalPlayerTurn, normalize, prepareCandidate, repeatedTrap, stageGuess, trapIdentity, turnSchema } from "./rules.js";
 
 const prompts = Object.fromEntries(["author", "player"].map((role) => [
   role, readFileSync(new URL(`./prompts/${role}.md`, import.meta.url), "utf8"),
@@ -50,18 +50,24 @@ function request(system, data, maxTokens, effort = "low") {
   };
 }
 
-export function agentRequest(game) {
+export const duplicateTrapFeedback = "That trap has already been used or comes from an example. Build a new board around a genuinely different trap.";
+
+export function agentRequest(game, usedTraps = []) {
   const { phase } = game;
   if (phase === "generate") return {
     role: "author",
     ...request(`${prompts.author}
-Generate an original English puzzle. Avoid reusing puzzle examples from the role instructions.
+Generate an original English puzzle. Treat the role instructions’ examples as illustrations only.
+Choose a substantially different trap from those examples and the supplied trap history before building the board.
+Changing a title, tile set, or word position does not make the same connecting word or rule a new trap.
+For a shared preceding or following word, set identity.kind to "connector" and identity.anchor to just that word.
+For all other traps, use kind "rule" and a short canonical phrase for the underlying connection.
 Create a short private title and choose one emoji to match the puzzle’s theme. Both are revealed together after play.
 Return {title, emoji, tiles:[{ref,text}], groups:[{color,title,rule,members:[{ref,explanation}]}],
-decoy:{title,refs:[ref,ref,ref,ref],explanation}}. Colors are yellow, green, blue, purple.
+decoy:{title,refs:[ref,ref,ref,ref],explanation,identity:{kind,anchor}}}. Colors are yellow, green, blue, purple.
 Use 16 distinct short display terms (max 28 characters) and simple refs. Use short category titles
 and one precise explanation per tile. Target a decoy with one member from each of the four groups.`,
-    { revisionFeedback: game.feedback }, 4800),
+    { revisionFeedback: game.feedback, previousTraps: usedTraps.slice(0, 30) }, 4800),
   };
   if (phase === "cold_review") return {
     role: "player",
@@ -77,10 +83,11 @@ patterns. Return {"observations":"brief findings, max 700 characters"}. Give con
     ...request(`Review a candidate intended partition for four exact connections, a fair decoy,
 discoverable purple, factual and uniform word associations, and unfair competing complete partitions.
 Use the independent solve's observations as evidence. Missing a difficult group alone is permissible.
+Reject a trap that repeats a connector or rule in previousTraps, including synonymous wording.
 Reject vague rules, weak words and invented expressions. On approval return {"pass":true,"feedback":""}.
 On rejection return {"pass":false,"feedback":"specific feedback, max 600 characters"}.
 This is a private editorial task separate from gameplay.`,
-    { candidate: game.candidate, observations: game.coldReview }, 2100),
+    { candidate: game.candidate, observations: game.coldReview, previousTraps: usedTraps.slice(0, 30) }, 2100),
   };
   if (phase === "screen_host") return {
     role: "author",
@@ -167,7 +174,7 @@ function directSpoiler(game, attempt) {
     mentions(game.tiles.find((tile) => tile.id === id).text)));
 }
 
-function rejectCandidate(game, feedback) {
+export function rejectCandidate(game, feedback) {
   game.candidate = null;
   game.coldReview = null;
   game.feedback = feedback;
@@ -202,7 +209,7 @@ function applyPlayer(game, turn) {
   } else if (turn.action?.type === "request_hint") game.playerFeedback = "The hint limit has been reached. Make a guess.";
 }
 
-export function applyResponse(game, raw) {
+export function applyResponse(game, raw, usedTraps = []) {
   if (typeof raw !== "string" || raw.length > 24000) throw new Error("malformed_output");
   const output = raw.trim();
   // Some providers format an otherwise valid response as one Markdown block.
@@ -212,7 +219,12 @@ export function applyResponse(game, raw) {
   switch (game.phase) {
     case "generate":
       try {
-        game.candidate = prepareCandidate(data);
+        const candidate = prepareCandidate(data);
+        if (repeatedTrap(candidate, usedTraps)) {
+          rejectCandidate(game, duplicateTrapFeedback);
+          return;
+        }
+        game.candidate = candidate;
         game.status = "validating";
         game.phase = "cold_review";
       } catch {
@@ -231,7 +243,12 @@ export function applyResponse(game, raw) {
         rejectCandidate(game, verdict.feedback);
         return;
       }
-      const { tiles, ...key } = game.candidate;
+      if (repeatedTrap(game.candidate, usedTraps)) {
+        rejectCandidate(game, duplicateTrapFeedback);
+        return;
+      }
+      const { tiles, trapKey, ...key } = game.candidate;
+      game.trapKey = trapKey ?? trapIdentity(key.decoy);
       game.key = key;
       game.tiles = tiles;
       game.candidate = null;

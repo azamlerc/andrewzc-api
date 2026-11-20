@@ -16,7 +16,10 @@ const candidateSchema = z.object({
   emoji: z.string().trim().optional(),
   tiles: z.array(z.object({ ref, text: text(28) }).strict()).length(16),
   groups: z.array(group).length(4),
-  decoy: z.object({ title: text(90), refs: quartet, explanation: text(440) }).strict(),
+  decoy: z.object({
+    title: text(90), refs: quartet, explanation: text(440),
+    identity: z.object({ kind: z.enum(["connector", "rule"]), anchor: text(90) }).strict(),
+  }).strict(),
 }).strict();
 
 export const hintLevel = z.enum(["direction", "mechanism"]);
@@ -34,6 +37,21 @@ export const terminal = (status) => ["won", "lost", "ended"].includes(status);
 export const named = (status) => status === "won" || status === "lost";
 export const normalize = (value) => value.normalize("NFKC").toLowerCase()
   .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+export function trapIdentity(decoy) {
+  const fill = decoy.title.match(/^(.+?)\s*_{2,}$|^_{2,}\s*(.+)$/u);
+  if (fill) return `connector:${normalize(fill[1] || fill[2])}`;
+  if (decoy.identity) return `${decoy.identity.kind}:${normalize(decoy.identity.anchor)}`;
+  return `rule:${normalize(decoy.title)}`;
+}
+
+const excludedTrapKeys = new Set(["connector:bee", "connector:dance"]);
+
+export function repeatedTrap(candidate, usedTraps) {
+  const key = candidate.trapKey ?? trapIdentity(candidate.decoy);
+  return excludedTrapKeys.has(key) || usedTraps.some((entry) =>
+    key === entry.key || normalize(candidate.decoy.title) === normalize(entry.title));
+}
 
 const graphemes = new Intl.Segmenter("en", { granularity: "grapheme" });
 
@@ -53,7 +71,7 @@ export function prepareCandidate(input) {
   const members = value.groups.flatMap((row) => row.members.map((member) => member.ref));
   const decoyRefs = value.decoy.refs;
   const decoyGroups = value.groups.filter((row) => row.members.some((member) => decoyRefs.includes(member.ref)));
-  if (!normalize(value.title) || ids.size !== 16 || new Set(terms).size !== 16 || terms.some((term) => !normalize(term)) ||
+  if (!normalize(value.decoy.identity.anchor) || !normalize(value.title) || ids.size !== 16 || new Set(terms).size !== 16 || terms.some((term) => !normalize(term)) ||
       new Set(value.groups.map((row) => row.color)).size !== 4 ||
       new Set(members).size !== 16 || members.some((id) => !ids.has(id)) ||
       new Set(decoyRefs).size !== 4 || decoyRefs.some((id) => !ids.has(id)) || decoyGroups.length < 3) {
@@ -74,7 +92,7 @@ export function prepareCandidate(input) {
         new Set(positions.map((i) => i % 4)).size === 1;
     })) {
       return {
-        tiles, groups, title: value.title, emoji: puzzleEmoji(value.emoji),
+        tiles, groups, title: value.title, emoji: puzzleEmoji(value.emoji), trapKey: trapIdentity(value.decoy),
         decoy: { title: value.decoy.title, explanation: value.decoy.explanation, tileIds: decoyRefs.map((ref) => ids.get(ref)) },
       };
     }

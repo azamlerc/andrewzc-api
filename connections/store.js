@@ -1,11 +1,13 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { ObjectId } from "mongodb";
 import { connectToMongo } from "../database.js";
+import { trapIdentity } from "./rules.js";
 
 const collection = "connections_games";
 const quotas = "connections_quotas";
 const slots = "connections_provider_slots";
 export const leaseMs = 45000;
+export const trapIndex = { unique: true, partialFilterExpression: { trapKey: { $type: "string" } } };
 
 export const digest = (token) => createHash("sha256").update(token).digest("hex");
 
@@ -28,6 +30,7 @@ export async function ensureConnectionsIndexes() {
   const db = await connectToMongo();
   await db.collection(collection).createIndex({ createdAt: -1, _id: -1 });
   await db.collection(collection).createIndex({ creation: 1 }, { unique: true });
+  await db.collection(collection).createIndex({ trapKey: 1 }, trapIndex);
   await db.collection(quotas).createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 }
 
@@ -70,6 +73,12 @@ export function createStore(getDb = connectToMongo) {
       return (await games()).find(filter, {
         projection: { createdAt: 1, author: 1, player: 1, status: 1, "key.title": 1, "key.emoji": 1 },
       }).sort({ createdAt: -1, _id: -1 }).limit(limit).toArray();
+    },
+    async trapHistory() {
+      const records = await (await games()).find({ "key.decoy.title": { $exists: true } }, {
+        projection: { trapKey: 1, "key.decoy.title": 1 },
+      }).sort({ createdAt: -1 }).toArray();
+      return records.map(({ trapKey, key }) => ({ key: trapKey ?? trapIdentity(key.decoy), title: key.decoy.title }));
     },
     claim: async (game, paid, leaseDuration = leaseMs) => (await games()).findOneAndUpdate({
       _id: game._id, revision: game.revision,

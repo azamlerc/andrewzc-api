@@ -7,10 +7,10 @@ import { MongoClient } from "mongodb";
 import { agentRequest, applyFailure, applyResponse, promptVersion } from "../connections/agents.js";
 import { advance, rulesVersion } from "../connections/coordinator.js";
 import { gameSummary, publicGame } from "../connections/projections.js";
-import { finish, prepareCandidate, resolveGuess, stageGuess } from "../connections/rules.js";
-import { createStore, digest, newGame } from "../connections/store.js";
+import { finish, prepareCandidate, repeatedTrap, resolveGuess, stageGuess, trapIdentity } from "../connections/rules.js";
+import { createStore, digest, newGame, trapIndex } from "../connections/store.js";
 import { createConnectionsRouter } from "../routes/connections.js";
-import { fixture, scriptedModels } from "./fixtures/connections.js";
+import { fishFixture, fixture, scriptedModels } from "./fixtures/connections.js";
 
 function board() {
   const game = newGame({ author: { provider: "openai" }, player: { provider: "claude" } });
@@ -144,6 +144,7 @@ test("board generation extends the lease and distinguishes a provider timeout", 
       return { release: async () => {} };
     },
     ownsClaim: async () => true,
+    trapHistory: async () => [],
     commit: async (record) => record,
   };
   const { game: result } = await advance(game, { store, modelCalls: {
@@ -177,6 +178,21 @@ test("both reviews request structured output and retry once without starting a n
   assert.deepEqual(publicGame(game).tiles, []);
 });
 
+test("trap history blocks the same connector across different labels and positions", () => {
+  const used = [{ key: trapIdentity({ title: "BLACK ___" }), title: "BLACK ___" }];
+  assert.equal(used[0].key, "connector:black");
+  const renamed = { ...fixture, decoy: { ...fixture.decoy, title: "Can follow the color", identity: { kind: "connector", anchor: "black" } } };
+  assert.equal(repeatedTrap(prepareCandidate(renamed), used), true);
+  const reversed = { ...renamed, decoy: { ...renamed.decoy, title: "___ Black" } };
+  const game = newGame({ author: { provider: "openai" }, player: { provider: "claude" } });
+  applyResponse(game, JSON.stringify(reversed), used);
+  assert.match(game.feedback, /already been used/);
+  assert.equal(game.phase, "generate");
+  assert.equal(repeatedTrap(prepareCandidate(fishFixture), used), false);
+  const example = { ...fixture, decoy: { ...fixture.decoy, title: "___ BEE", identity: { kind: "connector", anchor: "bee" } } };
+  assert.equal(repeatedTrap(prepareCandidate(example), []), true);
+});
+
 const uri = process.env.CONNECTIONS_TEST_MONGO;
 test("Mongo-backed HTTP flow saves a win in either assignment, fences races and protects private data", { skip: !uri }, async (t) => {
   assert.match(uri, /^mongodb:\/\/(127\.0\.0\.1|localhost):\d+(?:\/|$)/);
@@ -184,6 +200,7 @@ test("Mongo-backed HTTP flow saves a win in either assignment, fences races and 
   const db = mongo.db(`connections_test_${randomBytes(8).toString("hex")}`);
   const store = createStore(async () => db);
   await db.collection("connections_games").createIndex({ creation: 1 }, { unique: true });
+  await db.collection("connections_games").createIndex({ trapKey: 1 }, trapIndex);
   const callLog = [];
   const app = express();
   app.use(express.json());
@@ -206,6 +223,7 @@ test("Mongo-backed HTTP flow saves a win in either assignment, fences races and 
   }
 
   for (const author of ["openai", "claude"]) {
+    const puzzle = author === "openai" ? fixture : fishFixture;
     const token = randomBytes(32).toString("hex");
     const body = { author, creation: randomUUID() };
     const begin = callLog.length;
@@ -239,14 +257,14 @@ test("Mongo-backed HTTP flow saves a win in either assignment, fences races and 
       ({ game } = await request(`${path}/advance`, { revision: game.revision }, token));
     }
     assert.equal(game.status, "won");
-    assert.equal(game.title, fixture.title);
+    assert.equal(game.title, puzzle.title);
     assert.equal(game.mistakes, 2);
     assert.equal(game.solved.length, 4);
     assert.equal(game.events.filter(({ type }) => type === "retrospective").length, 2);
     assert.deepEqual((await request(path)).game.events, game.events);
     const saved = (await request("/games")).games.find(({ id }) => id === game.id);
-    assert.equal(saved.title, fixture.title);
-    assert.equal(saved.emoji, fixture.emoji);
+    assert.equal(saved.title, puzzle.title);
+    assert.equal(saved.emoji, puzzle.emoji);
     for (const { provider, request } of callLog.slice(begin)) {
       if (provider === author) continue;
       const input = JSON.parse(request.messages[0].content);
@@ -254,6 +272,24 @@ test("Mongo-backed HTTP flow saves a win in either assignment, fences races and 
       assert.doesNotMatch(JSON.stringify(input), /Under the Spotlight|🔦|AUTHOR-MEMORY-ONLY|Compounds ending in light/);
     }
   }
+
+  const pending = newGame({
+    author: { provider: "openai", model: "test" }, player: { provider: "claude", model: "test" }, creation: randomUUID(),
+    controller: digest("test"), rulesVersion, promptVersions: { author: promptVersion("author"), player: promptVersion("player") },
+  });
+  pending.phase = "quality_review";
+  pending.status = "validating";
+  pending.candidate = prepareCandidate(fixture);
+  await store.insert(pending);
+  const result = await advance(pending, {
+    store: { ...store, trapHistory: async () => [] },
+    modelCalls: { openai: async () => ({ text: '{"pass":true}' }) },
+    client: "race-test",
+  });
+  assert.equal(result.game.phase, "generate");
+  assert.equal(result.game.key, null);
+  assert.match(result.game.feedback, /already been used/);
+  assert.deepEqual(result.game.events, []);
 
   const game = newGame({
     author: { provider: "openai", model: "test" }, player: { provider: "claude", model: "test" }, creation: randomUUID(),

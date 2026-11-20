@@ -1,4 +1,4 @@
-import { agentRequest, applyFailure, applyResponse, localPhases, maxActiveMs, maxCalls, promptVersion, providers } from "./agents.js";
+import { agentRequest, applyFailure, applyResponse, duplicateTrapFeedback, localPhases, maxActiveMs, maxCalls, promptVersion, providers, rejectCandidate } from "./agents.js";
 import { completeFinalGuess, finish, isFinalPlayerTurn, resolveGuess, terminal } from "./rules.js";
 
 export const rulesVersion = "1";
@@ -37,6 +37,7 @@ export async function advance(game, { store, client, modelCalls = providers, tim
   const claimed = await store.claim(game, paid && !exhausted && !incompatible, leaseDuration);
   if (!claimed) return { game: await store.get(game._id), reason: "busy" };
   const claim = claimed.claim;
+  let reviewBeforePublish;
 
   if ((exhausted || incompatible) && isFinalPlayerTurn(claimed)) {
     completeFinalGuess(claimed);
@@ -71,15 +72,17 @@ export async function advance(game, { store, client, modelCalls = providers, tim
     }
     const startedAt = Date.now();
     const beforeResponse = structuredClone({ ...claimed, _id: null, claim: null });
+    if (claimed.phase === "quality_review") reviewBeforePublish = beforeResponse;
     let signal;
     try {
       if (!await store.ownsClaim(claimed)) return { game: await store.get(game._id), reason: "stale" };
-      const { role, ...request } = agentRequest(claimed);
+      const usedTraps = ["generate", "quality_review"].includes(claimed.phase) ? await store.trapHistory() : [];
+      const { role, ...request } = agentRequest(claimed, usedTraps);
       const { provider, model } = claimed[role];
       signal = AbortSignal.timeout(timeoutMs);
       const result = await modelCalls[provider]({ ...request, model, maxRetries: 0, signal });
       try {
-        applyResponse(claimed, result.text);
+        applyResponse(claimed, result.text, usedTraps);
       } catch (error) {
         const kind = error instanceof SyntaxError ? "invalid_json"
           : error?.name === "ZodError" ? "invalid_schema" : "invalid_response";
@@ -94,7 +97,16 @@ export async function advance(game, { store, client, modelCalls = providers, tim
       try { await slot.release(); } catch { /* The slot lease expires without intervention. */ }
     }
   }
-  const updated = await store.commit(claimed, claim);
+  let updated;
+  try {
+    updated = await store.commit(claimed, claim);
+  } catch (error) {
+    if (!reviewBeforePublish || error.code !== 11000 || error.keyPattern?.trapKey !== 1) throw error;
+    // A different game reserved this trap while the reviewer was running.
+    const retry = { ...reviewBeforePublish, _id: claimed._id, activeMs: claimed.activeMs };
+    rejectCandidate(retry, duplicateTrapFeedback);
+    updated = await store.commit(retry, claim);
+  }
   return { game: updated ?? await store.get(game._id), reason: updated ? "advanced" : "stale" };
 }
 
