@@ -33,6 +33,15 @@ const reviewSchema = z.discriminatedUnion("pass", [
 const screenSchema = z.object({ allow: z.boolean() }).strict();
 const retrospectiveSchema = z.object({ say: z.string().trim().min(1).max(600) }).strict();
 
+function reviewResponse(name, properties) {
+  return { name, schema: { type: "object", properties, required: Object.keys(properties), additionalProperties: false } };
+}
+
+const coldResponse = reviewResponse("connections_blind_review", { observations: { type: "string" } });
+const verdictResponse = reviewResponse("connections_puzzle_verdict", {
+  pass: { type: "boolean" }, feedback: { type: "string" },
+});
+
 function request(system, data, maxTokens, effort = "low") {
   return {
     system: `${application}\n\n${system}`,
@@ -47,8 +56,8 @@ export function agentRequest(game) {
     role: "author",
     ...request(`${prompts.author}
 Generate an original English puzzle. Avoid reusing puzzle examples from the role instructions.
-Create a short private title inspired by the board, its decoy, or its intended connections.
-Return {title, tiles:[{ref,text}], groups:[{color,title,rule,members:[{ref,explanation}]}],
+Create a short private title and choose one emoji to match the puzzle’s theme. Both are revealed together after play.
+Return {title, emoji, tiles:[{ref,text}], groups:[{color,title,rule,members:[{ref,explanation}]}],
 decoy:{title,refs:[ref,ref,ref,ref],explanation}}. Colors are yellow, green, blue, purple.
 Use 16 distinct short display terms (max 28 characters) and simple refs. Use short category titles
 and one precise explanation per tile. Target a decoy with one member from each of the four groups.`,
@@ -56,6 +65,7 @@ and one precise explanation per tile. Target a decoy with one member from each o
   };
   if (phase === "cold_review") return {
     role: "player",
+    responseSchema: coldResponse,
     ...request(`Independently cold-test this word board for puzzle quality. Give candidate category
 titles and member terms, a partition if you found one, competing connections, and weak or unclear
 patterns. Return {"observations":"brief findings, max 700 characters"}. Give conclusions only.`,
@@ -63,10 +73,11 @@ patterns. Return {"observations":"brief findings, max 700 characters"}. Give con
   };
   if (phase === "quality_review") return {
     role: "author",
+    responseSchema: verdictResponse,
     ...request(`Review a candidate intended partition for four exact connections, a fair decoy,
 discoverable purple, factual and uniform word associations, and unfair competing complete partitions.
 Use the independent solve's observations as evidence. Missing a difficult group alone is permissible.
-Reject vague rules, weak words and invented expressions. On approval return {"pass":true}.
+Reject vague rules, weak words and invented expressions. On approval return {"pass":true,"feedback":""}.
 On rejection return {"pass":false,"feedback":"specific feedback, max 600 characters"}.
 This is a private editorial task separate from gameplay.`,
     { candidate: game.candidate, observations: game.coldReview }, 2100),
@@ -210,10 +221,12 @@ export function applyResponse(game, raw) {
       return;
     case "cold_review":
       game.coldReview = coldSchema.parse(data).observations;
+      game.reviewRetried = false;
       game.phase = "quality_review";
       return;
     case "quality_review": {
       const verdict = reviewSchema.parse(data);
+      game.reviewRetried = false;
       if (!verdict.pass) {
         rejectCandidate(game, verdict.feedback);
         return;
@@ -271,6 +284,9 @@ export function applyFailure(game, error, { malformed = false, timedOut = false 
     publishHost(game, game.stagedHost, false);
   } else if (game.phase.startsWith("retrospective")) {
     game.phase = game.phase === "retrospective_author" ? "retrospective_player" : "done";
+  } else if ((game.phase === "cold_review" || game.phase === "quality_review") &&
+      !game.reviewRetried && (malformed || timedOut)) {
+    game.reviewRetried = true;
   } else if (game.phase === "generate" && malformed) {
     rejectCandidate(game, "Return a single valid JSON object using the requested puzzle schema.");
   } else {

@@ -65,6 +65,7 @@ export async function callClaude({
   client,
   signal,
   maxRetries,
+  responseSchema,
 }) {
   requireRequest({ system, messages, model, maxTokens });
   const sdk = requireClient(client, "ANTHROPIC_API_KEY", apiKey => new Anthropic({ apiKey }));
@@ -74,7 +75,10 @@ export async function callClaude({
     max_tokens: maxTokens,
     system,
     messages,
-    output_config: { effort },
+    output_config: {
+      effort,
+      ...(responseSchema && { format: { type: "json_schema", schema: responseSchema.schema } }),
+    },
     cache_control: { type: "ephemeral" },
   }, signal || maxRetries !== undefined ? { ...(signal && { signal }), ...(maxRetries !== undefined && { maxRetries }) } : undefined);
 
@@ -115,6 +119,7 @@ export async function callOpenAI({
   client,
   signal,
   maxRetries,
+  responseSchema,
 }) {
   requireRequest({ system, messages, model, maxTokens });
   const sdk = requireClient(client, "OPENAI_API_KEY", apiKey => new OpenAI({ apiKey }));
@@ -125,6 +130,7 @@ export async function callOpenAI({
     input: messages,
     reasoning: { effort },
     max_output_tokens: maxTokens,
+    ...(responseSchema && { text: { format: { type: "json_schema", strict: true, ...responseSchema } } }),
     store: false,
     truncation: "disabled",
   }, signal || maxRetries !== undefined ? { ...(signal && { signal }), ...(maxRetries !== undefined && { maxRetries }) } : undefined);

@@ -29,6 +29,13 @@ test("structural validation catches duplicate terms and overlapping groups", () 
   assert.throws(() => prepareCandidate(overlap), /invalid_partition/);
 });
 
+test("puzzle emoji accepts a single composed emoji and falls back for unusable metadata", () => {
+  assert.equal(prepareCandidate({ ...fixture, emoji: "👩🏾‍🔬" }).emoji, "👩🏾‍🔬");
+  assert.equal(prepareCandidate({ ...fixture, emoji: "⭐🌙" }).emoji, "🧩");
+  assert.equal(prepareCandidate({ ...fixture, emoji: "A" }).emoji, "🧩");
+  assert.equal(prepareCandidate({ ...fixture, emoji: undefined }).emoji, "🧩");
+});
+
 test("scoring rejects repeated sets, hides one-away membership and reveals the title at loss", () => {
   const { game, ids } = board();
   const decoy = ids(fixture.decoy.refs);
@@ -45,6 +52,8 @@ test("scoring rejects repeated sets, hides one-away membership and reveals the t
   assert.equal(game.mistakes, 0);
   assert.equal(game.status, "lost");
   assert.equal(publicGame(game).title, fixture.title);
+  assert.equal(publicGame(game).emoji, fixture.emoji);
+  assert.equal(game.events.at(-1).emoji, fixture.emoji);
   assert.equal(game.events.at(-1).title, fixture.title);
 });
 
@@ -63,6 +72,8 @@ test("private context, title, and held host text stay outside public projections
   assert.doesNotMatch(JSON.stringify(publicGame(game)), /candidate-(author|player)|Under the Spotlight/);
   finish(game, "ended", "director");
   assert.equal(gameSummary(game).title, undefined);
+  assert.equal(gameSummary(game).emoji, undefined);
+  assert.equal(game.events.at(-1).emoji, undefined);
   assert.equal(game.events.at(-1).title, undefined);
 });
 
@@ -144,6 +155,28 @@ test("board generation extends the lease and distinguishes a provider timeout", 
   assert.equal(publicGame(game).failureStage, "authoring");
 });
 
+test("both reviews request structured output and retry once without starting a new board", () => {
+  const game = newGame({ author: { provider: "openai" }, player: { provider: "claude" } });
+  applyResponse(game, JSON.stringify(fixture));
+  const candidate = game.candidate;
+  assert.deepEqual(agentRequest(game).responseSchema.schema.required, ["observations"]);
+  applyFailure(game, new SyntaxError(), { malformed: true });
+  assert.equal(game.status, "validating");
+  assert.equal(game.phase, "cold_review");
+  assert.equal(game.candidate, candidate);
+
+  applyResponse(game, '{"observations":"The categories are discoverable."}');
+  assert.deepEqual(agentRequest(game).responseSchema.schema.required, ["pass", "feedback"]);
+  applyFailure(game, new Error(), { timedOut: true });
+  assert.equal(game.phase, "quality_review");
+  assert.equal(game.status, "validating");
+  applyFailure(game, new Error(), { timedOut: true });
+  assert.equal(game.status, "failed");
+  assert.equal(publicGame(game).failure, "provider_timeout");
+  assert.equal(publicGame(game).failureStage, "quality_review");
+  assert.deepEqual(publicGame(game).tiles, []);
+});
+
 const uri = process.env.CONNECTIONS_TEST_MONGO;
 test("Mongo-backed HTTP flow saves a win in either assignment, fences races and protects private data", { skip: !uri }, async (t) => {
   assert.match(uri, /^mongodb:\/\/(127\.0\.0\.1|localhost):\d+(?:\/|$)/);
@@ -191,7 +224,7 @@ test("Mongo-backed HTTP flow saves a win in either assignment, fences races and 
 
     for (let i = 0; game.canAdvance && i < 50; i++) {
       if (!["won", "lost"].includes(game.status)) {
-        assert.doesNotMatch(JSON.stringify(game), /Under the Spotlight|AUTHOR-MEMORY-ONLY|PLAYER-MEMORY-ONLY|Compounds ending in light/);
+        assert.doesNotMatch(JSON.stringify(game), /Under the Spotlight|🔦|AUTHOR-MEMORY-ONLY|PLAYER-MEMORY-ONLY|Compounds ending in light/);
       }
       if (game.pendingGuess) {
         if (!game.events.some(({ type }) => type === "guess_resolved")) {
@@ -211,12 +244,14 @@ test("Mongo-backed HTTP flow saves a win in either assignment, fences races and 
     assert.equal(game.solved.length, 4);
     assert.equal(game.events.filter(({ type }) => type === "retrospective").length, 2);
     assert.deepEqual((await request(path)).game.events, game.events);
-    assert.equal((await request("/games")).games.find(({ id }) => id === game.id).title, fixture.title);
+    const saved = (await request("/games")).games.find(({ id }) => id === game.id);
+    assert.equal(saved.title, fixture.title);
+    assert.equal(saved.emoji, fixture.emoji);
     for (const { provider, request } of callLog.slice(begin)) {
       if (provider === author) continue;
       const input = JSON.parse(request.messages[0].content);
       if ("solution" in input) continue;
-      assert.doesNotMatch(JSON.stringify(input), /Under the Spotlight|AUTHOR-MEMORY-ONLY|Compounds ending in light/);
+      assert.doesNotMatch(JSON.stringify(input), /Under the Spotlight|🔦|AUTHOR-MEMORY-ONLY|Compounds ending in light/);
     }
   }
 

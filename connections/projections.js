@@ -1,10 +1,10 @@
-import { named, terminal } from "./rules.js";
+import { named, puzzleIdentity, terminal } from "./rules.js";
 
 export function gameSummary(game) {
   return {
     id: String(game._id), createdAt: game.createdAt, status: game.status,
     author: game.author, player: game.player,
-    ...(named(game.status) ? { title: game.key.title } : {}),
+    ...(named(game.status) ? puzzleIdentity(game.key) : {}),
   };
 }
 

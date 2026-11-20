@@ -20,7 +20,7 @@ export function newGame({ author, player, creation, controller, promptVersions, 
     calls: 0, activeMs: 0, generationCount: 0, tiles: [], solved: [], mistakes: 4, guesses: [],
     pendingGuess: null, requestedHint: null, hintCount: 0, idle: 0, playerFeedback: null,
     events: [], memory: { author: null, player: null }, candidate: null, coldReview: null,
-    feedback: null, key: null, stagedHost: null, failure: null, resumeStatus: null,
+    feedback: null, reviewRetried: false, key: null, stagedHost: null, failure: null, resumeStatus: null,
   };
 }
 
@@ -68,7 +68,7 @@ export function createStore(getDb = connectToMongo) {
         $or: [{ createdAt: { $lt: cursor.createdAt } }, { createdAt: cursor.createdAt, _id: { $lt: cursor._id } }],
       } : {};
       return (await games()).find(filter, {
-        projection: { createdAt: 1, author: 1, player: 1, status: 1, "key.title": 1 },
+        projection: { createdAt: 1, author: 1, player: 1, status: 1, "key.title": 1, "key.emoji": 1 },
       }).sort({ createdAt: -1, _id: -1 }).limit(limit).toArray();
     },
     claim: async (game, paid, leaseDuration = leaseMs) => (await games()).findOneAndUpdate({

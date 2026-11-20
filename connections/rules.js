@@ -13,6 +13,7 @@ const group = z.object({
 }).strict();
 const candidateSchema = z.object({
   title: text(60),
+  emoji: z.string().trim().optional(),
   tiles: z.array(z.object({ ref, text: text(28) }).strict()).length(16),
   groups: z.array(group).length(4),
   decoy: z.object({ title: text(90), refs: quartet, explanation: text(440) }).strict(),
@@ -33,6 +34,17 @@ export const terminal = (status) => ["won", "lost", "ended"].includes(status);
 export const named = (status) => status === "won" || status === "lost";
 export const normalize = (value) => value.normalize("NFKC").toLowerCase()
   .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+const graphemes = new Intl.Segmenter("en", { granularity: "grapheme" });
+
+function puzzleEmoji(value) {
+  return value && value.length <= 32 && /[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(value)
+    && [...graphemes.segment(value)].length === 1 ? value : "🧩";
+}
+
+export function puzzleIdentity(key) {
+  return { title: key.title, ...(key.emoji && { emoji: key.emoji }) };
+}
 
 export function prepareCandidate(input) {
   const value = candidateSchema.parse(input);
@@ -62,7 +74,7 @@ export function prepareCandidate(input) {
         new Set(positions.map((i) => i % 4)).size === 1;
     })) {
       return {
-        tiles, groups, title: value.title,
+        tiles, groups, title: value.title, emoji: puzzleEmoji(value.emoji),
         decoy: { title: value.decoy.title, explanation: value.decoy.explanation, tileIds: decoyRefs.map((ref) => ids.get(ref)) },
       };
     }
@@ -99,7 +111,7 @@ export function finish(game, status, reason) {
         ...publicGroup(row), rule: row.rule, members: row.members.map(({ id, explanation }) => ({ id, explanation })),
       })),
       decoy: game.key.decoy,
-      ...(named(status) ? { title: game.key.title } : {}),
+      ...(named(status) ? puzzleIdentity(game.key) : {}),
     });
   }
 }

@@ -41,6 +41,24 @@ test("Claude adapter sends low effort and cache control, filters thinking, and r
   assert.ok(!JSON.stringify(value).includes("private"));
 });
 
+test("optional JSON schema is sent using each provider's structured output format", async () => {
+  const schema = { type: "object", properties: { pass: { type: "boolean" } }, required: ["pass"], additionalProperties: false };
+  const responseSchema = { name: "puzzle_verdict", schema };
+  const text = '{"pass":true}';
+  await callClaude({
+    ...request, responseSchema,
+    client: claudeClient({ stop_reason: "end_turn", content: [{ type: "text", text }] }, (body) => {
+      assert.deepEqual(body.output_config, { effort: "low", format: { type: "json_schema", schema } });
+    }),
+  });
+  await callOpenAI({
+    ...request, responseSchema,
+    client: openaiClient({ status: "completed", output_text: text }, (body) => {
+      assert.deepEqual(body.text.format, { type: "json_schema", strict: true, ...responseSchema });
+    }),
+  });
+});
+
 test("Claude refusal and exhausted output budget are distinct failures", async () => {
   await assert.rejects(
     callClaude({ ...request, client: claudeClient({ stop_reason: "refusal", content: [], usage: { output_tokens: 4 } }) }),

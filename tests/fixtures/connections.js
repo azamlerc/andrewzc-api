@@ -8,6 +8,7 @@ const rows = [
 
 export const fixture = {
   title: "Under the Spotlight",
+  emoji: "🔦",
   tiles: rows.flatMap(({ terms }) => terms.map((text) => ({ ref: text, text }))),
   groups: rows.map(({ terms, explanations, ...row }) => ({
     ...row,
