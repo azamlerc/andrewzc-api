@@ -1,19 +1,7 @@
 import express from 'express';
-import cors from 'cors';
 import { requireAdminSession } from './auth.js';
 import { connectToMongo } from '../database.js';
 import { TimelineInputError, parseTimelineQuery, timelineKey, queryTimeline, timelineYears } from '../timeline.js';
-
-export const TIMELINE_SESSION_MAX_AGE_MS = 30 * 86400000;
-
-export function validTimelineSession(session, account, now = Date.now()) {
-  if (!session || session.revokedAt != null || !account || account.disabled !== false || !Array.isArray(account.roles) || !account.roles.includes('admin')) return false;
-  const created = +new Date(session.createdAt);
-  if (!Number.isFinite(created) || created > now + 60000 || now - created > TIMELINE_SESSION_MAX_AGE_MS) return false;
-  if (session.expiresAt != null && (!Number.isFinite(+new Date(session.expiresAt)) || +new Date(session.expiresAt) <= now)) return false;
-  return true;
-}
-
 function privateHeaders(_req, res, next) {
   res.set({
     'Cache-Control': 'private, no-store, max-age=0, must-revalidate',
@@ -25,31 +13,17 @@ function privateHeaders(_req, res, next) {
 }
 const send = (res, status, data) => res.status(status).type('application/json').end(JSON.stringify(data));
 
-export function createTimelineRouter({ authenticate = requireAdminSession, connect = connectToMongo,
-  production = () => !['development','test'].includes(process.env.NODE_ENV), now = () => Date.now() } = {}) {
+export function createTimelineRouter({ authenticate = requireAdminSession, connect = connectToMongo } = {}) {
   const router = express.Router();
   router.use(privateHeaders);
-  router.use((req, res, next) => {
-    const allowed = ['https://andrewzc.net', 'https://api.andrewzc.net'];
-    if (!production()) allowed.push('http://localhost', 'http://localhost:3000', 'http://localhost:8080');
-    if ((req.headers.origin && !allowed.includes(req.headers.origin))
-      || (req.headers['sec-fetch-site'] === 'cross-site' && !req.headers.origin)) return send(res, 403, { error: 'forbidden' });
-    next();
-  });
-  router.use(cors({ origin: true, credentials: true, methods: ['GET', 'OPTIONS'], maxAge: 0 }));
   router.use(authenticate);
   router.use(async (req, res, next) => {
     try {
       const db = await connect();
-      const session = await db.collection('sessions').findOne({ _id: req.admin.sessionId, accountId: req.admin.accountId, revokedAt: null },
-        { projection: { createdAt: 1, expiresAt: 1, revokedAt: 1 }, maxTimeMS: 3000 });
-      const account = await db.collection('accounts').findOne({ _id: req.admin.accountId },
-        { projection: { disabled: 1, roles: 1 }, maxTimeMS: 3000 });
-      if (!validTimelineSession(session, account, now())) return send(res, 401, { error: 'reauthentication_required' });
       req.timelineDb = db; next();
     } catch (error) {
       // Never log private record values, queries, cookies or database error messages.
-      console.error('[timeline] authorization unavailable', error.name);
+      console.error('[timeline] connection unavailable', error.name);
       return send(res, 503, { error: 'unavailable' });
     }
   });

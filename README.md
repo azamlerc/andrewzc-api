@@ -479,23 +479,24 @@ Errors follow a consistent shape:
 
 Common error codes: `not_found`, `page_not_found`, `bad_request`, `conflict`, `unauthorized`, `internal_error`.
 
-## Private timeline API (implemented locally; not deployed)
+## Private timeline API
 
-`routes/timeline.js` is mounted before public CORS and guards all reads itself.
+`routes/timeline.js` is mounted after the shared CORS handler and protects every
+read with the existing `requireAdminSession` middleware.
 Endpoints: `GET /timeline`, `GET /timeline/years`, and
 `GET /timeline/spans/:key/children`. Top-level/child reads support validated
 `from`, `to`, `limit` (at most 100), and scoped cursor parameters. The read model
 in `timeline.js` only queries active records in the authoritative generation.
 
-Access requires an existing valid session, a currently enabled account with an
-explicit admin role, and session creation within thirty days. Revocation, role
-removal, account disablement and an earlier explicit expiry are checked on every
-request. This stricter lifetime is timeline-specific; the legacy general admin
-cookie/session behavior is unchanged. The site supplies a fixed re-sign-in flow.
+Access uses the same admin session and cookie policy as the existing protected
+endpoints. There is no timeline-specific session lifetime, account/role recheck,
+origin gate or forced reauthentication flow.
 
 Responses and errors prohibit browser/CDN caching, vary by Cookie/Origin and
 omit raw evidence, photo UUIDs, Mongo IDs and configuration. Production origins
-are restricted (also the default if NODE_ENV is unset); filters and pagination are bounded; errors are generic and do
+use a shared allowlist for the HTTPS site/API plus HTTP/HTTPS loopback origins
+(localhost, 127.0.0.1, ::1, any port), so local frontends and sign-in use the
+remote backend. Filters and pagination are bounded; errors are generic and do
 not log private values. Auth is not delegated to frontend visibility or CORS.
 
 ```sh

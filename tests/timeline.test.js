@@ -1,21 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
+import cors from 'cors';
 import { createServer } from 'node:http';
-import { createTimelineRouter, validTimelineSession } from '../routes/timeline.js';
+import { createTimelineRouter } from '../routes/timeline.js';
 import { parseTimelineQuery, timelineDTO, TimelineInputError } from '../timeline.js';
+import { allowedBrowserOrigin, browserCorsOptions } from '../routes/origins.js';
 
-const NOW=Date.parse('2026-11-25T12:00:00Z');
-const validSession={createdAt:new Date(NOW-86400000),revokedAt:null};
-const admin={disabled:false,roles:['admin']};
 const rows=[{key:'trip:one',name:'Private trip',kind:'trip',level:'top',parentKey:null,childKeys:['destination:one'],
   observedFirst:new Date('2026-10-01'),observedLast:new Date('2026-10-14'),firstLocalDate:'2026-10-01',lastLocalDate:'2026-10-14',
   firstPhotoId:'must-not-leak',supportingBatchKeys:['must-not-leak'],_id:'private-db-id',reason:'private evidence',reviewStatus:'draft'}];
 
-async function fixture(t,{session=validSession,account=admin,readError=false}={}) {
+async function fixture(t,{readError=false}={}) {
   const calls=[];
   const db={collection(name){return{
-    async findOne(filter){calls.push({name,filter});if(name==='sessions')return session;if(name==='accounts')return account;
+    async findOne(filter){calls.push({name,filter});
       if(name==='timeline')return{activeGeneration:'generation'};
       return filter.key==='missing'?null:{key:filter.key};},
     find(filter,options){calls.push({name,filter,options});let limit=50;
@@ -25,8 +24,8 @@ async function fixture(t,{session=validSession,account=admin,readError=false}={}
       }};},
     aggregate(){return{async toArray(){return[{first:new Date('1998-01-01'),last:new Date('2026-11-07')}];}};},
   };}};
-  const app=express();let authenticationCalls=0;
-  app.use('/timeline',createTimelineRouter({production:()=>true,now:()=>NOW,connect:async()=>db,
+  const app=express();app.use(cors(browserCorsOptions));let authenticationCalls=0;
+  app.use('/timeline',createTimelineRouter({connect:async()=>db,
     authenticate(req,res,next){authenticationCalls++;if(req.get('X-Test-Auth')!=='yes')return res.status(401).json({error:'unauthorized'});
       req.admin={sessionId:'session',accountId:'account'};next();},
   }));
@@ -40,26 +39,9 @@ test('timeline rejects unauthenticated direct requests before querying any datab
   assert.equal(res.status,401);assert.equal(f.calls.length,0);
   assert.match(res.headers.get('cache-control'),/no-store/);assert.match(res.headers.get('vary'),/Cookie/);
 });
-for(const [label,session,account] of [
-  ['old session',{createdAt:new Date(NOW-31*86400000),revokedAt:null},admin],
-  ['revoked session',{...validSession,revokedAt:new Date(NOW)},admin],
-  ['expired session',{...validSession,expiresAt:new Date(NOW-1)},admin],
-  ['missing session',null,admin],['disabled account',validSession,{...admin,disabled:true}],
-  ['non-admin account',validSession,{disabled:false,roles:['user']}],
-])test(`timeline refuses ${label}`,async t=>{
-  const f=await fixture(t,{session,account});const res=await fetch(f.url+'/timeline',{headers:{'X-Test-Auth':'yes'}});
-  assert.equal(res.status,401);assert.ok(!f.calls.some(c=>c.name==='spans'||c.name==='timeline'));
-});
-
-test('admin role must be an explicit array and malformed session dates fail closed',()=>{
-  assert.equal(validTimelineSession(validSession,{disabled:false,roles:'admin'},NOW),false);
-  assert.equal(validTimelineSession({createdAt:'not a date'},admin,NOW),false);
-});
-
-for(const origin of ['https://evil.example','http://localhost','https://andrewzc.net.evil.example'])test(`production rejects origin ${origin} before auth`,async t=>{
+for(const origin of ['https://evil.example','http://localhost.evil.example','https://andrewzc.net.evil.example'])test(`rejects origin ${origin} before auth`,async t=>{
   const f=await fixture(t);const res=await fetch(f.url+'/timeline',{headers:{origin,'X-Test-Auth':'yes'}});
-  assert.equal(res.status,403);assert.equal(f.authCalls(),0);assert.equal(f.calls.length,0);
-  assert.match(res.headers.get('cache-control'),/no-store/);
+  assert.equal(res.headers.get('access-control-allow-origin'),null);assert.equal(f.authCalls(),0);assert.equal(f.calls.length,0);
 });
 
 test('authenticated DTOs omit internal evidence and are never cacheable or conditional 304 responses',async t=>{
@@ -102,14 +84,45 @@ test('cursors are scoped, reject missing keys and preserve page bounds',()=>{
   assert.throws(()=>parseTimelineQuery({cursor:bad}),TimelineInputError);
   assert.equal(timelineDTO(rows[0]).firstPhotoId,undefined);
 });
-test('default router uses real missing-session protection and fails closed when NODE_ENV is unset',async t=>{
-  const previous=process.env.NODE_ENV;delete process.env.NODE_ENV;
-  t.after(()=>{if(previous===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=previous;});
-  let reads=0;const app=express();app.use('/timeline',createTimelineRouter({connect:async()=>{reads++;throw new Error('Must not connect');}}));
+test('default router uses real missing-session protection for local and remote origins',async t=>{
+  let reads=0;const app=express();app.use(cors(browserCorsOptions));app.use('/timeline',createTimelineRouter({connect:async()=>{reads++;throw new Error('Must not connect');}}));
   const server=createServer(app);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const url=`http://127.0.0.1:${server.address().port}/timeline`;
   assert.equal((await fetch(url)).status,401);
-  assert.equal((await fetch(url,{headers:{Origin:'http://localhost'}})).status,403);
+  assert.equal((await fetch(url,{headers:{Origin:'http://localhost'}})).status,401);
   assert.equal(reads,0);
+});
+for(const origin of ['http://localhost','http://localhost:3000','http://localhost:8080','http://127.0.0.1:5500','http://[::1]:8000'])test(`authenticated loopback frontend can read remote API: ${origin}`,async t=>{
+  const f=await fixture(t);
+  const res=await fetch(f.url+'/timeline',{headers:{Origin:origin,'X-Test-Auth':'yes'}});
+  assert.equal(res.status,200);assert.equal(res.headers.get('access-control-allow-origin'),origin);
+  assert.equal(res.headers.get('access-control-allow-credentials'),'true');
+  assert.match(res.headers.get('cache-control'),/no-store/);
+});
+test('loopback allowlist rejects opaque, credential-bearing, path and lookalike origins',()=>{
+  for(const origin of ['null','http://127.0.0.1.evil.example','http://localhost/path','http://user@localhost:3000','https://evil.example'])assert.equal(allowedBrowserOrigin(origin),false,origin);
+});
+
+test('shared CORS handles localhost preflight and unauthorized responses', async t => {
+  const f = await fixture(t);
+  const headers = { Origin: 'http://localhost' };
+  const denied = await fetch(f.url + '/timeline/years', { headers });
+  assert.equal(denied.status, 401);
+  assert.equal(denied.headers.get('access-control-allow-origin'), headers.Origin);
+  assert.equal(denied.headers.get('access-control-allow-credentials'), 'true');
+  const preflight = await fetch(f.url + '/timeline/years', {
+    method: 'OPTIONS', headers: { ...headers, 'Access-Control-Request-Method': 'GET' },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), headers.Origin);
+  assert.equal(f.authCalls(), 1);
+  assert.equal(f.calls.length, 0);
+});
+test('timeline uses the existing session guard without secondary account or session queries', async t => {
+  const f = await fixture(t);
+  const res = await fetch(f.url + '/timeline/years', { headers: { 'X-Test-Auth': 'yes', Origin: 'http://localhost' } });
+  assert.equal(res.status, 200);
+  assert.equal(f.authCalls(), 1);
+  assert.ok(!f.calls.some(call => ['accounts', 'sessions'].includes(call.name)));
 });

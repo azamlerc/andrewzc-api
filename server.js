@@ -18,6 +18,7 @@ import { mcpRouter } from "./routes/mcp.js";
 import { blueRoomRouter } from "./routes/blue-room.js";
 import { connectionsRouter } from "./routes/connections.js";
 import { timelineRouter } from "./routes/timeline.js";
+import { browserCorsOptions } from "./routes/origins.js";
 import { initScheduler } from "./agents/scheduler.js";
 
 dotenv.config();
@@ -37,27 +38,12 @@ const app = express();
 app.use(express.json());
 app.use(cookieParser());
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-// Sensitive timeline has its own strict origin/auth/cache policy, applied before
-// the general-purpose CORS settings used by public routes.
-app.use("/timeline", timelineRouter);
-app.use(cors({
-  origin: (origin, cb) => {
-    const allowlist = [
-      "http://localhost",
-      "http://localhost:3000",
-      "https://andrewzc.net",
-      "https://api.andrewzc.net",
-    ];
-    if (!origin || allowlist.includes(origin)) return cb(null, true);
-    return cb(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-}));
+app.use(cors(browserCorsOptions));
 
 // ---- Routes ----
 
 app.use("/admin",    authRouter);
+app.use("/timeline", timelineRouter);
 app.use("/pages",    pagesRouter);
 app.use("/entities", entitiesRouter);
 app.use("/imagine",  imagineRouter);
