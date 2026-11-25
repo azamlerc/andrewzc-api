@@ -478,3 +478,33 @@ Errors follow a consistent shape:
 ```
 
 Common error codes: `not_found`, `page_not_found`, `bad_request`, `conflict`, `unauthorized`, `internal_error`.
+
+## Private timeline API (implemented locally; not deployed)
+
+`routes/timeline.js` is mounted before public CORS and guards all reads itself.
+Endpoints: `GET /timeline`, `GET /timeline/years`, and
+`GET /timeline/spans/:key/children`. Top-level/child reads support validated
+`from`, `to`, `limit` (at most 100), and scoped cursor parameters. The read model
+in `timeline.js` only queries active records in the authoritative generation.
+
+Access requires an existing valid session, a currently enabled account with an
+explicit admin role, and session creation within thirty days. Revocation, role
+removal, account disablement and an earlier explicit expiry are checked on every
+request. This stricter lifetime is timeline-specific; the legacy general admin
+cookie/session behavior is unchanged. The site supplies a fixed re-sign-in flow.
+
+Responses and errors prohibit browser/CDN caching, vary by Cookie/Origin and
+omit raw evidence, photo UUIDs, Mongo IDs and configuration. Production origins
+are restricted (also the default if NODE_ENV is unset); filters and pagination are bounded; errors are generic and do
+not log private values. Auth is not delegated to frontend visibility or CORS.
+
+```sh
+node --test tests/timeline.test.js
+```
+
+Tests use a local synthetic HTTP server. Live read-model checks covered Atlas
+pagination and hierarchy children without exposing credentials. No production
+endpoint deployment or authentication bypass was performed. Before deployment,
+verify CDN no-store behavior and the static host's anti-framing headers, and
+review the broader shared public/admin origin and long-lived general session
+posture documented in the context repository's `timeline/SECURITY.md`.

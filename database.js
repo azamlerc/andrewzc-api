@@ -44,6 +44,8 @@ export async function ensureIndexes() {
 	await db.collection("proposed").createIndex({ list: 1, status: 1 });
 	await db.collection("agent_context").createIndex({ agent: 1, topic: 1 }, { unique: true });
 	await db.collection("data_source_cache").createIndex({ source: 1, cacheKey: 1 }, { unique: true });
+  await db.collection("spans").createIndex({ generation: 1, recordStatus: 1, level: 1, observedFirst: -1, key: -1 });
+  await db.collection("spans").createIndex({ generation: 1, recordStatus: 1, parentKey: 1, observedFirst: 1, key: 1 });
 	await db.collection("feedback").createIndex({ entityKey: 1 });
 	await db.collection("feedback").createIndex({ list: 1, decidedAt: -1 });
 
