@@ -670,7 +670,7 @@ export async function getEntitiesByArtist(key) {
   if (!artist?.name) return { artist: artist || null, entities: [] };
 
   const docs = await db.collection("entities")
-    .find({ $or: [{ name: artist.name }, { reference: artist.name }] })
+    .find({ $or: [{ name: artist.name }, { reference: artist.name }, { references: artist.name }] })
     .sort({ name: 1, key: 1 })
     .toArray();
 
