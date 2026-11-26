@@ -664,18 +664,36 @@ export async function getEntitiesByTrip(key) {
   return { page, entities };
 }
 
+async function findEntitiesForArtistName(db, name) {
+  return db.collection("entities")
+    .find({ $or: [{ name }, { reference: name }, { references: name }] })
+    .sort({ name: 1, key: 1 })
+    .toArray();
+}
+
 export async function getEntitiesByArtist(key) {
   const db = await connectToMongo();
   const artist = await db.collection("entities").findOne({ list: "artists", key });
   if (!artist?.name) return { artist: artist || null, entities: [] };
 
-  const docs = await db.collection("entities")
-    .find({ $or: [{ name: artist.name }, { reference: artist.name }, { references: artist.name }] })
-    .sort({ name: 1, key: 1 })
-    .toArray();
-
+  const docs = await findEntitiesForArtistName(db, artist.name);
   const entities = docs.filter((doc) => !(doc.list === "artists" && doc.key === key));
   return { artist, entities };
+}
+
+// Looks up by display name, so bands without an artists entity still get a
+// page built from the entities that reference them. Returns null when nothing
+// matches at all.
+export async function getEntitiesByArtistName(rawName) {
+  const name = String(rawName || "").trim().replace(/'/g, "’");
+  if (!name) return null;
+
+  const db = await connectToMongo();
+  const artist = await db.collection("entities").findOne({ list: "artists", name });
+  const docs = await findEntitiesForArtistName(db, name);
+  const entities = docs.filter((doc) => !(artist && doc.list === "artists" && doc.key === artist.key));
+  if (!artist && !entities.length) return null;
+  return { name: artist?.name || name, artist: artist || null, entities };
 }
 
 // ---- Geo search ----

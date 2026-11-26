@@ -78,6 +78,7 @@ app.get("/", (_req, res) => {
     "GET  /countries/:code",
     "GET  /cities/:key",
     "GET  /trips/:key",
+    "GET  /artists?name=",
     "GET  /artists/:key",
     "GET  /entities?name=&list=&limit=",
     "GET  /entities?search=&list=&limit=",

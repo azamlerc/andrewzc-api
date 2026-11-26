@@ -7,7 +7,7 @@ import express from "express";
 import {
   getFlagsData,
   getMapRoutes,
-  getEntitiesByCountry, getEntitiesByCity, getEntitiesByTrip, getEntitiesByArtist,
+  getEntitiesByCountry, getEntitiesByCity, getEntitiesByTrip, getEntitiesByArtist, getEntitiesByArtistName,
 } from "../database.js";
 import { cityKeyToDisplayName } from "../utils.js";
 import { naturalLanguageSearch } from "../search.js";
@@ -75,6 +75,21 @@ lookupRouter.get("/trips/:key", async (req, res) => {
     return res.json({ page: strip(result.page), entities: result.entities.map(strip) });
   } catch (err) {
     console.error("GET /trips/:key failed:", err);
+    return res.status(500).json({ error: "internal_error", message: cleanError(err) });
+  }
+});
+
+// GET /artists?name=Foo%20Fighters — by display name; works for bands that
+// have no artists entity.
+lookupRouter.get("/artists", async (req, res) => {
+  const name = String(req.query.name || "").trim();
+  if (!name) return res.status(400).json({ error: "bad_request", message: "Missing artist name" });
+  try {
+    const result = await getEntitiesByArtistName(name);
+    if (!result) return res.status(404).json({ error: "not_found", message: `No entities reference ${name}` });
+    return res.json({ name: result.name, artist: strip(result.artist), entities: result.entities.map(strip) });
+  } catch (err) {
+    console.error("GET /artists failed:", err);
     return res.status(500).json({ error: "internal_error", message: cleanError(err) });
   }
 });
