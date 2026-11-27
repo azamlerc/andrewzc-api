@@ -2,6 +2,8 @@ import express from 'express';
 import { requireAdminSession } from './auth.js';
 import { connectToMongo } from '../database.js';
 import { TimelineInputError, parseTimelineQuery, timelineKey, queryTimeline, timelineYears } from '../timeline.js';
+import { TimelineEditError, renameSpan, deleteSpan } from '../timeline-edits.js';
+import { allowedBrowserOrigin } from './origins.js';
 function privateHeaders(_req, res, next) {
   res.set({
     'Cache-Control': 'private, no-store, max-age=0, must-revalidate',
@@ -31,7 +33,8 @@ export function createTimelineRouter({ authenticate = requireAdminSession, conne
     try { await callback(req, res); }
     catch (error) {
       if (error instanceof TimelineInputError) return send(res, 400, { error: 'bad_request' });
-      console.error('[timeline] read unavailable', error.name);
+      if (error instanceof TimelineEditError) return send(res, error.status, { error: error.code });
+      console.error('[timeline] request unavailable', error.name);
       return send(res, 503, { error: 'unavailable' });
     }
   };
@@ -45,6 +48,23 @@ export function createTimelineRouter({ authenticate = requireAdminSession, conne
     const key = timelineKey(req.params.key);
     const result = await queryTimeline(req.timelineDb, parseTimelineQuery(req.query, key), key);
     return send(res, result ? 200 : 404, result || { error: 'not_found' });
+  }));
+  // Edits use the admin cookie (SameSite=None), so require a browser Origin we
+  // trust and, for bodies, JSON: a cross-site form cannot send either.
+  const editGuard = (req, res, next) => {
+    const origin = req.get('Origin');
+    if (!origin || !allowedBrowserOrigin(origin)) return send(res, 403, { error: 'forbidden' });
+    if (req.method === 'PATCH' && !req.is('application/json')) return send(res, 415, { error: 'unsupported_media_type' });
+    next();
+  };
+  router.patch('/spans/:key', editGuard, handle(async (req, res) => {
+    const key = timelineKey(req.params.key);
+    if (!req.body || typeof req.body !== 'object' || Object.keys(req.body).join() !== 'name') throw new TimelineInputError('Only name');
+    return send(res, 200, await renameSpan(req.timelineDb, key, req.body.name));
+  }));
+  router.delete('/spans/:key', editGuard, handle(async (req, res) => {
+    const key = timelineKey(req.params.key);
+    return send(res, 200, await deleteSpan(req.timelineDb, key));
   }));
   return router;
 }
